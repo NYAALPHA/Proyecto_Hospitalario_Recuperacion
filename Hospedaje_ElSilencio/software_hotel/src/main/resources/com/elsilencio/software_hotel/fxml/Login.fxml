@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.PasswordField?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.image.Image?>
+<?import javafx.scene.image.ImageView?>
+<?import javafx.scene.layout.AnchorPane?>
+<?import javafx.scene.layout.Pane?>
+<?import javafx.scene.text.Font?>
+
+<AnchorPane id="AnchorPane" fx:id="rootPane" prefHeight="168.0" prefWidth="485.0"
+   styleClass="mainFxmlClass" xmlns="http://javafx.com/javafx/26"
+   xmlns:fx="http://javafx.com/fxml/1"
+   fx:controller="com.elsilencio.software_hotel.controlador.LoginController">
+   <children>
+      <Pane id="pane" prefHeight="230.0" prefWidth="485.0" style="-fx-background-color: #6699ff;"
+         stylesheets="@../style/login.css">
+         <children>
+            <Button fx:id="btnIngresar" layoutX="70.0" layoutY="163.0" mnemonicParsing="false"
+               onMouseClicked="#IngresarDashboard" prefHeight="31.0" prefWidth="103.0"
+               style="-fx-background-color: #330000; -fx-graphic: url('/com/elsilencio/software_hotel/imagenes/check.png');"
+               stylesheets="@../style/login.css" text="Ingresar" textAlignment="CENTER"
+               textFill="WHITE">
+               <font>
+                  <Font size="13.0" />
+               </font>
+            </Button>
+            <Button fx:id="btnSalir" layoutX="245.0" layoutY="163.0" mnemonicParsing="false"
+               onMouseClicked="#salirAplicacion" prefHeight="31.0" prefWidth="103.0"
+               style="-fx-background-color: #330000; -fx-graphic: url('/com/elsilencio/software_hotel/imagenes/error.png');"
+               text="Salir" textAlignment="CENTER" textFill="WHITE">
+               <font>
+                  <Font size="13.0" />
+               </font>
+            </Button>
+            <Label layoutX="54.0" layoutY="43.0" text="Usuario :">
+               <font>
+                  <Font size="15.0" />
+               </font>
+            </Label>
+            <TextField fx:id="txtUser" layoutX="137.0" layoutY="41.0" prefHeight="26.0"
+               prefWidth="211.0" promptText="Ingresar aqui el usuario" />
+            <Label layoutX="29.0" layoutY="104.0" text="Contraseña :">
+               <font>
+                  <Font size="15.0" />
+               </font>
+            </Label>
+            <PasswordField fx:id="txtPassword" layoutX="137.0" layoutY="99.0"
+               onKeyPressed="#IngresarEnter" prefHeight="26.0" prefWidth="211.0"
+               promptText="Ingresar aqui la contraseña" />
+            <ImageView fitHeight="100.0" fitWidth="103.0" layoutX="364.0" layoutY="62.0"
+               pickOnBounds="true" preserveRatio="true">
+               <image>
+                  <Image url="@../imagenes/Banned%20User.png" />
+               </image>
+            </ImageView>
+            <Button layoutX="429.0" layoutY="14.0" mnemonicParsing="false"
+               onMouseClicked="#salirAplicacion" styleClass="btnBorrar"
+               stylesheets="@../style/dashboard.css" text="X" />
+         </children>
+      </Pane>
+   </children>
+</AnchorPane>

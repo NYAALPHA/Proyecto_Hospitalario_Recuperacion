@@ -1,0 +1,14 @@
+#boton-ingresar {
+    -fx-graphic: url('/com/elsilencio/software_hotel/imagenes/icono-login.png');
+    -fx-graphic-text-gap: 10px;  /* Espacio entre imagen y texto */
+    -fx-content-display: left;    /* Imagen a la izquierda */
+    -fx-padding: 5px;
+}
+
+#barra-titulo{
+    -fx-background-color: #5ec3ce;
+}
+
+#Cerrar{
+    -fx-background-color: #e20a40;
+}

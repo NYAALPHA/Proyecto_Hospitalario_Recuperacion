@@ -1,0 +1,460 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import java.net.URL?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.DatePicker?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.MenuItem?>
+<?import javafx.scene.control.SplitMenuButton?>
+<?import javafx.scene.control.Tab?>
+<?import javafx.scene.control.TabPane?>
+<?import javafx.scene.control.TableColumn?>
+<?import javafx.scene.control.TableView?>
+<?import javafx.scene.control.TextArea?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.image.Image?>
+<?import javafx.scene.image.ImageView?>
+<?import javafx.scene.layout.AnchorPane?>
+<?import javafx.scene.layout.Pane?>
+<?import javafx.scene.text.Font?>
+
+<AnchorPane id="AnchorPane" fx:id="rootPane" prefHeight="735.0" prefWidth="996.0" styleClass="mainFxmlClass" xmlns="http://javafx.com/javafx/26" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.elsilencio.software_hotel.controlador.DashboardController">
+   <stylesheets>
+      <URL value="@/com/elsilencio/software_hotel/style/dashboard.css" />
+   </stylesheets>
+   <children>
+      <Pane layoutY="-5.0" prefHeight="742.0" prefWidth="300.0" style="-fx-background-color: #45b3b3;">
+         <children>
+            <ImageView fitHeight="87.0" fitWidth="272.0" layoutX="14.0" layoutY="70.0" pickOnBounds="true" preserveRatio="true">
+               <image>
+                  <Image url="@../imagenes/logo-dashboard.png" />
+               </image>
+            </ImageView>
+            <Button id="configuracion" fx:id="btnConfiguracion" graphicTextGap="15.0" layoutX="46.0" layoutY="647.0" mnemonicParsing="false" onMouseClicked="#ComponenteConf" prefHeight="58.0" prefWidth="208.0" styleClass="generalBtn" stylesheets="@../style/dashboard.css" text="CONFIGURACION">
+               <font>
+                  <Font size="18.0" />
+               </font>
+            </Button>
+            <Button id="trabajador" fx:id="btnTrabajador" graphicTextGap="15.0" layoutX="46.0" layoutY="560.0" mnemonicParsing="false" onMouseClicked="#ComponenteTrab" prefHeight="58.0" prefWidth="208.0" styleClass="generalBtn" stylesheets="@../style/dashboard.css" text="TRABAJADOR">
+               <font>
+                  <Font size="18.0" />
+               </font>
+            </Button>
+            <Button id="reserva" fx:id="btnReserva" graphicTextGap="15.0" layoutX="46.0" layoutY="469.0" mnemonicParsing="false" onMouseClicked="#ComponenteReser" prefHeight="58.0" prefWidth="208.0" styleClass="generalBtn" stylesheets="@../style/dashboard.css" text="RESERVA">
+               <font>
+                  <Font size="18.0" />
+               </font>
+            </Button>
+            <Button id="producto" fx:id="btnProducto" graphicTextGap="15.0" layoutX="46.0" layoutY="384.0" mnemonicParsing="false" onMouseClicked="#ComponenteProd" prefHeight="58.0" prefWidth="208.0" styleClass="generalBtn" stylesheets="@../style/dashboard.css" text="PRODUCTO">
+               <font>
+                  <Font size="18.0" />
+               </font>
+            </Button>
+            <Button id="cliente" fx:id="btnCliente" graphicTextGap="15.0" layoutX="46.0" layoutY="296.0" mnemonicParsing="false" onMouseClicked="#ComponenteClie" prefHeight="58.0" prefWidth="208.0" styleClass="generalBtn" stylesheets="@../style/dashboard.css" text="CLIENTE">
+               <font>
+                  <Font size="18.0" />
+               </font>
+            </Button>
+            <Button id="habitacion" fx:id="btnHabitacion" graphicTextGap="15.0" layoutX="46.0" layoutY="203.0" mnemonicParsing="false" onMouseClicked="#ComponenteHab" prefHeight="58.0" prefWidth="208.0" styleClass="generalBtn" stylesheets="@../style/dashboard.css" text="HABITACION">
+               <font>
+                  <Font size="18.0" />
+               </font>
+            </Button>
+            <Button fx:id="btnBorrar" layoutX="14.0" layoutY="14.0" mnemonicParsing="false" onMouseClicked="#salirAplicacion" prefHeight="49.0" prefWidth="56.0" styleClass="btnBorrar" stylesheets="@../style/dashboard.css" text="X" textFill="WHITE">
+               <font>
+                  <Font size="20.0" />
+               </font>
+            </Button>
+         </children>
+      </Pane>
+      <TabPane fx:id="panelGeneral" layoutX="300.0" prefHeight="737.0" prefWidth="696.0" stylesheets="@../style/dashboard.css" tabClosingPolicy="UNAVAILABLE">
+         <tabs>
+            <Tab text="Habitacion">
+               <content>
+                  <AnchorPane minHeight="0.0" minWidth="0.0" prefHeight="180.0" prefWidth="200.0">
+                     <children>
+                        <TableView fx:id="tablaHabitaciones" layoutX="26.0" layoutY="308.0" onMouseClicked="#seleccionarItemHab" prefHeight="367.0" prefWidth="644.0">
+                           <columns>
+                              <TableColumn fx:id="colIdHab" prefWidth="75.0" text="ID" />
+                              <TableColumn fx:id="colNumHab" prefWidth="75.0" text="NUM" />
+                              <TableColumn fx:id="colPisoHab" prefWidth="75.0" text="PISO" />
+                              <TableColumn fx:id="colPrecioHab" prefWidth="75.0" text="PRECIO" />
+                              <TableColumn fx:id="colEstadoHab" prefWidth="75.0" text="ESTADO" />
+                              <TableColumn fx:id="colTipoHab" prefWidth="75.0" text="TIPO" />
+                              <TableColumn fx:id="colCaracHab" prefWidth="193.0" text="CARACTERISTICAS" />
+                           </columns>
+                        </TableView>
+                        <Label layoutX="52.0" layoutY="65.0" text="NUMERO : ">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtNumeroHab" layoutX="155.0" layoutY="64.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="70.0" layoutY="148.0" text="PRECIO :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtPisoHab" layoutX="155.0" layoutY="106.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="90.0" layoutY="107.0" text="PISO : ">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtPrecioHab" layoutX="155.0" layoutY="147.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="348.0" layoutY="65.0" text="CARACTERIS. :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextArea fx:id="txtCaracteristicaHab" layoutX="476.0" layoutY="65.0" prefHeight="72.0" prefWidth="194.0" />
+                        <Label layoutX="64.0" layoutY="193.0" text="ESTADO :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <SplitMenuButton fx:id="splitEstadoHab" layoutX="155.0" layoutY="194.0" mnemonicParsing="false" prefHeight="25.0" prefWidth="143.0">
+                           <items>
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="DISPONIBLE" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="OCUPADA" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="MANTENIMIENTO" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="LIMPIEZA" />
+                           </items>
+                        </SplitMenuButton>
+                        <Label layoutX="91.0" layoutY="232.0" text="TIPO :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <SplitMenuButton fx:id="splitTipoHab" layoutX="156.0" layoutY="233.0" mnemonicParsing="false" prefHeight="25.0" prefWidth="143.0">
+                           <items>
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="INDIVIDUAL" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="DOBLE" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="SUITE" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="FAMILIAR" />
+                           </items>
+                        </SplitMenuButton>
+                        <Label layoutX="14.0" layoutY="14.0" text="HABITACIONES">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <Button fx:id="bntCrearHab" layoutX="359.0" layoutY="233.0" mnemonicParsing="false" onMouseClicked="#crearHabitaciones" styleClass="btn-guardar" stylesheets="@../style/dashboard.css" text="crear" />
+                        <Button fx:id="btnEditarHab" layoutX="461.0" layoutY="233.0" mnemonicParsing="false" onMouseClicked="#editarHabitaciones" styleClass="btn-editar" stylesheets="@../style/dashboard.css" text="editar" />
+                        <Button fx:id="btnEliminarHab" layoutX="569.0" layoutY="233.0" mnemonicParsing="false" onMouseClicked="#eliminarHabitaciones" styleClass="btn-borrar" stylesheets="@../style/dashboard.css" text="eliminar" />
+                        <Label layoutX="348.0" layoutY="146.0" text="DESCRIP. : ">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextArea fx:id="txtDescripcionHab" layoutX="476.0" layoutY="146.0" prefHeight="72.0" prefWidth="194.0" />
+                     </children>
+                  </AnchorPane>
+               </content>
+            </Tab>
+            <Tab text="Cliente">
+               <content>
+                  <AnchorPane minHeight="0.0" minWidth="0.0" prefHeight="180.0" prefWidth="200.0">
+                     <children>
+                        <TableView fx:id="tablaCliente" layoutX="26.0" layoutY="341.0" onMouseClicked="#seleccionarItemClien" prefHeight="367.0" prefWidth="644.0">
+                           <columns>
+                              <TableColumn fx:id="colIdClie" prefWidth="58.0" text="ID" />
+                              <TableColumn fx:id="colNombreClie" prefWidth="124.0" text="NOMBRE" />
+                              <TableColumn fx:id="colDniClie" prefWidth="87.0" text="DNI" />
+                              <TableColumn fx:id="colGenClie" prefWidth="97.0" text="GENERO" />
+                              <TableColumn fx:id="colTelefClie" prefWidth="109.0" text="TELEFONO" />
+                              <TableColumn fx:id="colEmailClie" minWidth="2.0" prefWidth="151.0" text="EMAIL" />
+                           </columns>
+                        </TableView>
+                        <Button fx:id="btnCrearClie" layoutX="105.0" layoutY="291.0" mnemonicParsing="false" onMouseClicked="#crearClientes" styleClass="btn-guardar" stylesheets="@../style/dashboard.css" text="crear" />
+                        <Button fx:id="btnEditarClie" layoutX="235.0" layoutY="291.0" mnemonicParsing="false" onMouseClicked="#editarClientes" styleClass="btn-editar" stylesheets="@../style/dashboard.css" text="editar" />
+                        <Button fx:id="btnEliminarClie" layoutX="371.0" layoutY="291.0" mnemonicParsing="false" onMouseClicked="#eliminarClientes" styleClass="btn-borrar" stylesheets="@../style/dashboard.css" text="eliminar" />
+                        <Label layoutX="52.0" layoutY="65.0" text="NOMBRE :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtNombreClie" layoutX="155.0" layoutY="64.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="31.0" layoutY="107.0" text="APELLIDO P :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtApellidoMClie" layoutX="155.0" layoutY="148.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="26.0" layoutY="152.0" text="APELLIDO M. :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtApellidoPClie" layoutX="155.0" layoutY="104.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="348.0" layoutY="65.0" text="DIRECCION :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextArea fx:id="txtDireccionClie" layoutX="476.0" layoutY="65.0" prefHeight="72.0" prefWidth="194.0" />
+                        <Label layoutX="52.0" layoutY="193.0" text="TIPO DNI :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <SplitMenuButton fx:id="splitDNIClie" layoutX="155.0" layoutY="191.0" mnemonicParsing="false" prefHeight="25.0" prefWidth="143.0">
+                           <items>
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="DNI" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="PASAPORTE" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="CARNET_EXTRANJERIA" />
+                           </items>
+                        </SplitMenuButton>
+                        <Label layoutX="51.0" layoutY="232.0" text="NUMERO :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtNumeroClie" layoutX="157.0" layoutY="231.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="14.0" layoutY="14.0" text="CLIENTES">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <Label layoutX="354.0" layoutY="149.0" text="TELEFONO :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtTelefonoClie" layoutX="476.0" layoutY="148.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="390.0" layoutY="188.0" text="EMAIL :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtEmailClie" layoutX="476.0" layoutY="187.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="371.0" layoutY="232.0" text="GENERO :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <SplitMenuButton fx:id="splitGeneroClie" layoutX="473.0" layoutY="233.0" mnemonicParsing="false" prefHeight="25.0" prefWidth="143.0">
+                           <items>
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="MASCULINO" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="FEMENINO" />
+                           </items>
+                        </SplitMenuButton>
+                     </children>
+                  </AnchorPane>
+               </content>
+            </Tab>
+            <Tab text="Producto">
+               <content>
+                  <AnchorPane minHeight="0.0" minWidth="0.0" prefHeight="726.0" prefWidth="696.0">
+                     <children>
+                        <TableView fx:id="tablaProducto" layoutX="58.0" layoutY="274.0" onMouseClicked="#seleccionarItemProd" prefHeight="367.0" prefWidth="581.0">
+                           <columns>
+                              <TableColumn fx:id="colIdProd" prefWidth="95.0" text="ID" />
+                              <TableColumn fx:id="colNombreProd" prefWidth="87.0" text="NOMBRE" />
+                              <TableColumn fx:id="colPrecioProd" prefWidth="83.0" text="PRECIO" />
+                              <TableColumn fx:id="colUniProd" prefWidth="99.0" text="UNIDAD" />
+                              <TableColumn fx:id="colDescProd" prefWidth="215.0" text="DESCRIPCION" />
+                           </columns>
+                        </TableView>
+                        <Label layoutX="52.0" layoutY="65.0" text="NOMBRE :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtNombreProd" layoutX="155.0" layoutY="64.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="70.0" layoutY="148.0" text="UNIDAD">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtPrecioProd" layoutX="155.0" layoutY="106.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="67.0" layoutY="107.0" text="PRECIO :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <Label layoutX="348.0" layoutY="65.0" text="DESCRIPCION :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextArea fx:id="txtDescripcionProd" layoutX="476.0" layoutY="65.0" prefHeight="72.0" prefWidth="166.0" />
+                        <SplitMenuButton fx:id="splitUnidadProd" layoutX="154.0" layoutY="149.0" mnemonicParsing="false" prefHeight="25.0" prefWidth="143.0">
+                           <items>
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="UNIDAD" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="KILOGRAMO" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="GRAMO" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="LITRO" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="MILILITRO" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="PAQUETE" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="CAJA" />
+                           </items>
+                        </SplitMenuButton>
+                        <Label layoutX="14.0" layoutY="14.0" text="PRODUCTOS">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <Button fx:id="btnCrearProd" layoutX="280.0" layoutY="219.0" mnemonicParsing="false" onMouseClicked="#crearProducto" styleClass="btn-guardar" stylesheets="@../style/dashboard.css" text="crear" />
+                        <Button fx:id="btnEditarProd" layoutX="409.0" layoutY="219.0" mnemonicParsing="false" onMouseClicked="#editarProducto" styleClass="btn-editar" stylesheets="@../style/dashboard.css" text="editar" />
+                        <Button fx:id="btnEliminarProd" layoutX="532.0" layoutY="219.0" mnemonicParsing="false" onMouseClicked="#eliminarProducto" styleClass="btn-borrar" stylesheets="@../style/dashboard.css" text="eliminar" />
+                     </children>
+                  </AnchorPane>
+               </content>
+            </Tab>
+            <Tab text="Reserva">
+               <content>
+                  <AnchorPane minHeight="0.0" minWidth="0.0" prefHeight="180.0" prefWidth="200.0">
+                     <children>
+                        <TableView fx:id="tablaReserva" layoutX="26.0" layoutY="340.0" prefHeight="335.0" prefWidth="644.0">
+                           <columns>
+                              <TableColumn prefWidth="35.0" text="ID" />
+                              <TableColumn prefWidth="67.0" text="NUM. HAB" />
+                              <TableColumn prefWidth="71.0" text="CLIENTE" />
+                              <TableColumn prefWidth="89.0" text="TRABAJADOR" />
+                              <TableColumn prefWidth="82.0" text="RESERVA" />
+                              <TableColumn prefWidth="73.0" text="FECHA RES" />
+                              <TableColumn prefWidth="83.0" text="FECHA ING" />
+                              <TableColumn prefWidth="75.0" text="FECHA SAL" />
+                              <TableColumn prefWidth="68.0" text="COSTO" />
+                           </columns>
+                        </TableView>
+                        <Label layoutX="26.0" layoutY="65.0" text="HABITACION :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtHabitacionResv" layoutX="155.0" layoutY="64.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="24.0" layoutY="148.0" text="TRABAJADOR :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtClienteResv" layoutX="155.0" layoutY="106.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="64.0" layoutY="107.0" text="CLIENTE :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtTrabajadorResv" layoutX="155.0" layoutY="147.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="96.0" layoutY="193.0" text="TIPO :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <SplitMenuButton fx:id="splitTipoResv" layoutX="155.0" layoutY="194.0" mnemonicParsing="false" prefHeight="25.0" prefWidth="143.0">
+                           <items>
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="DISPONIBLE" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="OCUPADA" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="MANTENIMIENTO" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="LIMPIEZA" />
+                           </items>
+                        </SplitMenuButton>
+                        <Label layoutX="342.0" layoutY="65.0" text="FECHA INGRESO :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <Label layoutX="14.0" layoutY="14.0" text="RESERVAS">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <Label layoutX="75.0" layoutY="232.0" text="COSTO :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtCostoResv" layoutX="155.0" layoutY="231.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="357.0" layoutY="122.0" text="FECHA SALIDA :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <DatePicker fx:id="fechaIResv" layoutX="490.0" layoutY="64.0" prefHeight="35.0" prefWidth="181.0" />
+                        <DatePicker fx:id="fechaSResv" layoutX="490.0" layoutY="124.0" prefHeight="35.0" prefWidth="180.0" />
+                        <Label layoutX="71.0" layoutY="270.0" text="ESTADO :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <SplitMenuButton fx:id="splitEstadoResv" layoutX="155.0" layoutY="271.0" mnemonicParsing="false" prefHeight="25.0" prefWidth="143.0">
+                           <items>
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="DISPONIBLE" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="OCUPADA" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="MANTENIMIENTO" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="LIMPIEZA" />
+                           </items>
+                        </SplitMenuButton>
+                        <Button fx:id="btnCrearResv" layoutX="347.0" layoutY="289.0" mnemonicParsing="false" styleClass="btn-guardar" stylesheets="@../style/dashboard.css" text="crear" />
+                        <Button fx:id="btnEditarResv" layoutX="456.0" layoutY="289.0" mnemonicParsing="false" styleClass="btn-editar" stylesheets="@../style/dashboard.css" text="editar" />
+                        <Button fx:id="btnEliminarResv" layoutX="565.0" layoutY="289.0" mnemonicParsing="false" styleClass="btn-borrar" stylesheets="@../style/dashboard.css" text="eliminar" />
+                        <Button fx:id="btnPagoResv" layoutX="530.0" layoutY="228.0" mnemonicParsing="false" styleClass="btn-pago" stylesheets="@../style/dashboard.css" text="realizar pago" />
+                     </children>
+                  </AnchorPane>
+               </content>
+            </Tab>
+            <Tab text="Trabajador">
+               <content>
+                  <AnchorPane minHeight="0.0" minWidth="0.0" prefHeight="180.0" prefWidth="200.0">
+                     <children>
+                        <TableView fx:id="tablaTrabajador" layoutX="26.0" layoutY="308.0" onMouseClicked="#seleccionarItemTrab" prefHeight="367.0" prefWidth="644.0">
+                           <columns>
+                              <TableColumn fx:id="colIdTrab" prefWidth="75.0" text="ID" />
+                              <TableColumn fx:id="colPersonalTrab" prefWidth="140.0" text="PERSONAL" />
+                              <TableColumn fx:id="colSueldoTrab" prefWidth="106.0" text="SUELDO" />
+                              <TableColumn fx:id="colUsuarioTrab" prefWidth="151.0" text="USUARIO" />
+                              <TableColumn fx:id="colEstadoTrab" prefWidth="122.0" text="ESTADO" />
+                           </columns>
+                        </TableView>
+                        <Label layoutX="102.0" layoutY="68.0" text="DNI :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtPersonalTrab" layoutX="155.0" layoutY="64.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="60.0" layoutY="148.0" text="USUARIO :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtSueldoTrab" layoutX="155.0" layoutY="106.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="67.0" layoutY="107.0" text="SUELDO :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtUsuarioTrab" layoutX="155.0" layoutY="147.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Label layoutX="21.0" layoutY="193.0" text="CONTRASEÑA :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <Label layoutX="67.0" layoutY="232.0" text="ESTADO :">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <SplitMenuButton fx:id="splitEstadoTrab" layoutX="156.0" layoutY="233.0" mnemonicParsing="false" prefHeight="25.0" prefWidth="143.0">
+                           <items>
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="ACTIVO" />
+                              <MenuItem mnemonicParsing="false" onAction="#seleccionarOpcion" text="INACTIVO" />
+                           </items>
+                        </SplitMenuButton>
+                        <Label layoutX="14.0" layoutY="14.0" text="TRABAJADORES">
+                           <font>
+                              <Font size="18.0" />
+                           </font>
+                        </Label>
+                        <TextField fx:id="txtContraTrab" layoutX="155.0" layoutY="192.0" prefHeight="29.0" prefWidth="140.0" />
+                        <Button fx:id="btnCrearTrab" layoutX="572.0" layoutY="144.0" mnemonicParsing="false" onMouseClicked="#crearTrabajador" styleClass="btn-guardar" stylesheets="@../style/dashboard.css" text="crear" />
+                        <Button fx:id="btnEditarTrab" layoutX="567.0" layoutY="189.0" mnemonicParsing="false" onMouseClicked="#editarTrabajador" styleClass="btn-editar" stylesheets="@../style/dashboard.css" text="editar" />
+                        <Button fx:id="btnEliminarTrab" layoutX="551.0" layoutY="233.0" mnemonicParsing="false" onMouseClicked="#eliminarTrabajador" styleClass="btn-borrar" stylesheets="@../style/dashboard.css" text="eliminar" />
+                     </children>
+                  </AnchorPane>
+               </content>
+            </Tab>
+         </tabs>
+      </TabPane>
+   </children>
+</AnchorPane>

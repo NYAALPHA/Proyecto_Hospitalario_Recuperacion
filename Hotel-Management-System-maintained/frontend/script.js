@@ -1142,8 +1142,8 @@ guestDetailsForm.addEventListener('submit', async (e) => {
         showSystemMessageModal('Invalid Country Prefix', 'Please select a valid country prefix.');
         return;
     }
-    if (!phoneLocal || phoneLocal.length < 7 || phoneLocal.length > 12) {
-        showSystemMessageModal('Invalid Phone Number', 'Please enter a valid phone number.');
+    if (!phoneLocal || phoneLocal.length != 10 ) {
+        showSystemMessageModal('Invalid Phone Number', 'Please enter a valid phone number, 10 digits.');
         return;
     }
 

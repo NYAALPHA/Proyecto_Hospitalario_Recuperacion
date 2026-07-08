@@ -614,7 +614,6 @@ _BACKEND_API_BASE_URL = os.getenv("BACKEND_API_BASE_URL", "http://backend:3000/a
 _PHONE_PREFIX_API_URLS = [
     f"{_BACKEND_API_BASE_URL}/phone-prefixes",
     "http://localhost:3000/api/phone-prefixes",
-    "https://restcountries.com/v3.1/all?fields=name,idd,cca2",
 ]
 _PHONE_PREFIX_FALLBACK = {
     "+977": "🇳🇵 +977 Nepal",
@@ -626,6 +625,45 @@ def _cca2_to_flag(cca2: str | None) -> str:
     if not cca2 or len(cca2) != 2:
         return "🌐"
     return "".join(chr(ord(char) + 127397) for char in cca2.upper())
+
+
+def _build_phone_prefix_labels_from_countries(countries) -> dict[str, str]:
+    discovered: dict[str, str] = {}
+
+    for country in countries if isinstance(countries, list) else []:
+        if not isinstance(country, dict):
+            continue
+        idd = country.get("idd") or {}
+        root = str(idd.get("root") or "").strip()
+        if not root:
+            continue
+
+        suffixes = idd.get("suffixes") or [""]
+        country_name = str((country.get("name") or {}).get("common") or "").strip()
+        flag = _cca2_to_flag(str(country.get("cca2") or "").strip())
+
+        for suffix in suffixes:
+            suffix_text = str(suffix or "").strip()
+            code = f"{root}{suffix_text}"
+            if not re.fullmatch(r"\+[1-9]\d{0,3}", code) or code in discovered:
+                continue
+            discovered[code] = f"{flag} {code} {country_name}".strip()
+
+    return discovered
+
+
+def _build_phone_prefix_labels_from_options(options) -> dict[str, str]:
+    discovered: dict[str, str] = {}
+
+    for item in options if isinstance(options, list) else []:
+        if not isinstance(item, dict):
+            continue
+        value = str(item.get("value") or "").strip()
+        label = str(item.get("label") or "").strip()
+        if value and label:
+            discovered[value] = label
+
+    return discovered
 
 
 def _load_phone_prefix_labels() -> dict[str, str]:
@@ -648,13 +686,15 @@ def _load_phone_prefix_labels() -> dict[str, str]:
         return labels
 
     discovered: dict[str, str] = {}
-    prefixes = payload if isinstance(payload, list) else payload.get("prefixes") if isinstance(payload, dict) else []
-    if isinstance(prefixes, list):
-        for item in prefixes:
-            value = str((item or {}).get("value") or "").strip()
-            label = str((item or {}).get("label") or "").strip()
-            if value and label:
-                discovered[value] = label
+    if isinstance(payload, list):
+        discovered = _build_phone_prefix_labels_from_countries(payload)
+    elif isinstance(payload, dict):
+        prefixes = payload.get("prefixes")
+        if isinstance(prefixes, list):
+            if prefixes and all(isinstance(item, dict) and item.get("value") and item.get("label") for item in prefixes):
+                discovered = _build_phone_prefix_labels_from_options(prefixes)
+            else:
+                discovered = _build_phone_prefix_labels_from_countries(prefixes)
 
     if discovered:
         labels.update(discovered)
@@ -669,8 +709,36 @@ def _load_phone_prefix_labels() -> dict[str, str]:
 PHONE_PREFIX_LABELS = _load_phone_prefix_labels()
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
 def _normalize_local_phone_number(value: str) -> str:
     return re.sub(r"\D", "", value or "")
+
+
+def _is_valid_email(value: str) -> bool:
+    candidate = (value or "").strip()
+    return not candidate or bool(_EMAIL_RE.fullmatch(candidate))
+
+
+def _is_valid_local_phone(value: str, max_digits: int = 10) -> bool:
+    digits = _normalize_local_phone_number(value)
+    return bool(digits) and len(digits) <= max_digits
+
+
+def _split_phone_prefix_and_local(phone: str) -> tuple[str, str]:
+    normalized = _normalize_local_phone_number(phone)
+    if not normalized:
+        return next(iter(PHONE_PREFIX_LABELS.keys())), ""
+
+    for prefix in sorted(PHONE_PREFIX_LABELS.keys(), key=len, reverse=True):
+        prefix_digits = prefix.lstrip("+")
+        if normalized.startswith(prefix_digits):
+            local = normalized[len(prefix_digits):]
+            if local:
+                return prefix, local[:10]
+
+    return next(iter(PHONE_PREFIX_LABELS.keys())), normalized[:10]
 
 
 if "authenticated" not in st.session_state:
@@ -1338,8 +1406,8 @@ with st.sidebar:
         st.session_state.page = "Guest Info Table"; st.rerun()
     if st.button("Rooms", use_container_width=True):
         st.session_state.page = "Rooms Table"; st.rerun()
-    if st.button("Settings", use_container_width=True):
-        st.session_state.page = "Settings"; st.rerun()
+    if st.button("Archive & Storage", use_container_width=True):
+        st.session_state.page = "Archive & Storage"; st.rerun()
 
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
     st.markdown("<div class='sidebar-title'>Fast Reservation</div>", unsafe_allow_html=True)
@@ -1429,21 +1497,29 @@ with st.sidebar:
         format_func=lambda value: PHONE_PREFIX_LABELS[value],
         key="sb_walkin_prefix",
     )
-    walkin_phone_local = st.text_input("Guest phone", placeholder="9800000000", key="sb_walkin_phone")
+    walkin_phone_local = st.text_input(
+        "Guest phone",
+        placeholder="10 digits max",
+        max_chars=10,
+        key="sb_walkin_phone",
+    )
 
     normalized_walkin_phone = _normalize_local_phone_number(walkin_phone_local)
+    valid_walkin_phone = _is_valid_local_phone(walkin_phone_local)
     can_book = bool(
         target_room
         and not date_error
         and walkin_name.strip()
         and walkin_prefix in PHONE_PREFIX_LABELS
-        and normalized_walkin_phone
+        and valid_walkin_phone
     )
     if st.button("Book", use_container_width=True, disabled=not can_book, key="sb_book_btn", type="primary"):
         if not target_room:
             st.error("No rooms available for the selected dates.")
         elif not walkin_name.strip() or not normalized_walkin_phone:
             st.error("Please provide guest name and phone number.")
+        elif len(normalized_walkin_phone) > 10:
+            st.error("Phone number must have at most 10 digits.")
         elif walkin_prefix not in PHONE_PREFIX_LABELS:
             st.error("Please select a valid country prefix.")
         else:
@@ -1518,6 +1594,615 @@ with st.sidebar:
         st.rerun()
 
 apply_checkout_statuses()
+
+
+def _render_rooms_admin_sections() -> None:
+    st.markdown("### Physical Room Inventory Updates")
+    tab_rooms, tab_types = st.tabs(["Manage Rooms", "Manage Room Types"])
+
+    with tab_rooms:
+        c_add, c_edit, c_del = st.columns(3)
+
+        with c_add:
+            with st.expander("Add New Room", expanded=False):
+                with st.form("add_room_form"):
+                    new_rm_num = st.text_input("Room Number (Unique)", placeholder="e.g., 105", max_chars=20)
+                    rt_choices = run_q("SELECT room_type_id, type_name FROM room_types")
+                    rt_map = {r["type_name"]: r["room_type_id"] for r in rt_choices} if rt_choices else {}
+                    new_rm_type = st.selectbox("Assign Category", list(rt_map.keys()) if rt_map else ["- Setup Types First -"])
+                    new_rm_stat = st.selectbox("Initial Status", ["available", "occupied", "maintenance"])
+
+                    if st.form_submit_button("Create Room"):
+                        if not new_rm_num.strip() or not rt_map:
+                            st.error("Room number and a valid category are required.")
+                        else:
+                            try:
+                                run_write(
+                                    "INSERT INTO rooms (room_number, room_type_id, status) VALUES (%s, %s, %s)",
+                                    (new_rm_num.strip(), rt_map[new_rm_type], new_rm_stat),
+                                )
+                                st.success(f"Room {html.escape(new_rm_num.strip())} added.")
+                                st.rerun()
+                            except RuntimeError as e:
+                                st.error(str(e))
+
+        with c_edit:
+            with st.expander("Edit Room", expanded=False):
+                all_rooms_list = run_q("SELECT room_id, room_number, room_type_id, status FROM rooms ORDER BY room_number")
+                if all_rooms_list:
+                    rm_edit_map = {f"Room {r['room_number']}": r for r in all_rooms_list}
+                    sel_edit_rm = st.selectbox("Select Room", list(rm_edit_map.keys()))
+                    tgt_edit_rm = rm_edit_map[sel_edit_rm]
+
+                    with st.form("edit_room_form"):
+                        chg_rm_num = st.text_input("Room Number", value=str(tgt_edit_rm["room_number"]), max_chars=20)
+                        rt_choices2 = run_q("SELECT room_type_id, type_name FROM room_types")
+                        rt_map2 = {r["type_name"]: r["room_type_id"] for r in rt_choices2} if rt_choices2 else {}
+                        current_type_name = next((k for k, v in rt_map2.items() if v == tgt_edit_rm["room_type_id"]), None)
+                        chg_rm_type = st.selectbox(
+                            "Category",
+                            list(rt_map2.keys()),
+                            index=list(rt_map2.keys()).index(current_type_name) if current_type_name else 0,
+                        )
+                        status_list = ["available", "occupied", "maintenance"]
+                        chg_rm_stat = st.selectbox(
+                            "Status",
+                            status_list,
+                            index=status_list.index(tgt_edit_rm["status"]),
+                        )
+
+                        if st.form_submit_button("Save Changes"):
+                            try:
+                                rowcount = run_write(
+                                    """
+                                    UPDATE rooms SET room_number=%s, room_type_id=%s, status=%s
+                                    WHERE room_id=%s
+                                    AND NOT EXISTS (
+                                        SELECT 1 FROM reservations
+                                        WHERE room_id=%s AND reservation_status IN ('pending','active')
+                                    )
+                                    """,
+                                    (
+                                        chg_rm_num.strip(),
+                                        rt_map2[chg_rm_type],
+                                        chg_rm_stat,
+                                        tgt_edit_rm["room_id"],
+                                        tgt_edit_rm["room_id"],
+                                    ),
+                                )
+                                if rowcount == 0:
+                                    st.error("Cannot modify: room has an active reservation, or it no longer exists.")
+                                else:
+                                    st.success("Room updated.")
+                                    st.rerun()
+                            except RuntimeError as e:
+                                st.error(str(e))
+                else:
+                    st.info("No rooms to edit.")
+
+        with c_del:
+            with st.expander("Delete Room", expanded=False):
+                all_rooms_list2 = run_q("SELECT room_id, room_number FROM rooms ORDER BY room_number")
+                if all_rooms_list2:
+                    rm_del_map = {f"Room {r['room_number']}": r["room_id"] for r in all_rooms_list2}
+                    sel_del_rm = st.selectbox("Select Room to Remove", list(rm_del_map.keys()))
+
+                    st.warning("Ensure this room has no active reservations before deleting.")
+                    if st.button("Permanently Delete Room", use_container_width=True):
+                        any_hist = run_q(
+                            "SELECT 1 FROM reservations WHERE room_id = %s LIMIT 1",
+                            (rm_del_map[sel_del_rm],),
+                            fetch="one",
+                        )
+                        if any_hist:
+                            st.error("Cannot delete: reservation history exists. Set the room to Maintenance status instead.")
+                        else:
+                            try:
+                                run_write("DELETE FROM rooms WHERE room_id = %s", (rm_del_map[sel_del_rm],))
+                                st.success("Room removed from inventory.")
+                                st.rerun()
+                            except RuntimeError as e:
+                                st.error(str(e))
+                else:
+                    st.info("No rooms found.")
+
+    with tab_types:
+        st.markdown("### Room Category & Pricing")
+        c_tadd, c_tedit, c_tdel = st.columns(3)
+
+        with c_tadd:
+            with st.expander("Add New Room Type", expanded=False):
+                with st.form("add_type_form"):
+                    nt_name = st.text_input("Category Name", placeholder="e.g., Deluxe Forest Suite", max_chars=100)
+                    nt_cap = st.number_input("Max Capacity (Guests)", min_value=1, value=2)
+                    nt_prc = st.number_input("Base Rate per Night (NPR)", min_value=0.0, value=5000.0, step=500.0)
+
+                    if st.form_submit_button("Add Category"):
+                        if not nt_name.strip():
+                            st.error("Category name is required.")
+                        else:
+                            try:
+                                run_write(
+                                    "INSERT INTO room_types (type_name, capacity, price) VALUES (%s, %s, %s)",
+                                    (nt_name.strip(), int(nt_cap), float(nt_prc)),
+                                )
+                                st.success(f"Category '{html.escape(nt_name.strip())}' added.")
+                                st.rerun()
+                            except RuntimeError as e:
+                                st.error(str(e))
+
+        with c_tedit:
+            with st.expander("Edit Category", expanded=False):
+                all_types_list = run_q("SELECT room_type_id, type_name, capacity, price FROM room_types ORDER BY type_name")
+                if all_types_list:
+                    type_edit_map = {t["type_name"]: t for t in all_types_list}
+                    sel_edit_type = st.selectbox("Select Category", list(type_edit_map.keys()))
+                    tgt_edit_type = type_edit_map[sel_edit_type]
+
+                    with st.form("edit_type_form"):
+                        chg_t_name = st.text_input("Name", value=tgt_edit_type["type_name"], max_chars=100)
+                        chg_t_cap = st.number_input("Max Capacity", min_value=1, value=int(tgt_edit_type["capacity"]))
+                        chg_t_prc = st.number_input("Rate per Night", min_value=0.0, value=float(tgt_edit_type["price"]), step=500.0)
+
+                        if st.form_submit_button("Save Changes"):
+                            try:
+                                run_write(
+                                    "UPDATE room_types SET type_name=%s, capacity=%s, price=%s WHERE room_type_id=%s",
+                                    (chg_t_name.strip(), int(chg_t_cap), float(chg_t_prc), tgt_edit_type["room_type_id"]),
+                                )
+                                st.success("Category updated.")
+                                st.rerun()
+                            except RuntimeError as e:
+                                st.error(str(e))
+                else:
+                    st.info("No categories exist yet.")
+
+        with c_tdel:
+            with st.expander("Delete Category", expanded=False):
+                all_types_list2 = run_q("SELECT room_type_id, type_name FROM room_types ORDER BY type_name")
+                if all_types_list2:
+                    type_del_map = {t["type_name"]: t["room_type_id"] for t in all_types_list2}
+                    sel_del_type = st.selectbox("Select Category to Delete", list(type_del_map.keys()))
+
+                    st.warning("All rooms assigned to this category must be reassigned or deleted first.")
+                    if st.button("Delete Category", use_container_width=True):
+                        in_use = run_q(
+                            "SELECT 1 FROM rooms WHERE room_type_id = %s LIMIT 1",
+                            (type_del_map[sel_del_type],),
+                            fetch="one",
+                        )
+                        if in_use:
+                            st.error("Cannot delete: rooms are assigned to this category. Reassign or delete them first.")
+                        else:
+                            try:
+                                run_write("DELETE FROM room_types WHERE room_type_id = %s", (type_del_map[sel_del_type],))
+                                st.success("Category deleted.")
+                                st.rerun()
+                            except RuntimeError as e:
+                                st.error(str(e))
+                else:
+                    st.info("No categories found.")
+
+
+def _render_reservations_admin_section() -> None:
+    st.markdown("### Reservation Management")
+    c_radd, c_redit, c_rdel = st.columns(3)
+
+    today_dt = now_npl().date()
+
+    def _overlaps(room_id, checkin, checkout, exclude_res_id=None):
+        sql = """
+            SELECT 1 FROM reservations
+            WHERE room_id = %s
+              AND reservation_status IN ('pending', 'active')
+              AND check_in_date < %s
+              AND check_out_date > %s
+        """
+        params = [room_id, checkout, checkin]
+        if exclude_res_id:
+            sql += " AND reservation_id != %s"
+            params.append(exclude_res_id)
+        rows = run_q(sql, tuple(params))
+        return bool(rows)
+
+    with c_radd:
+        with st.expander("Add New Reservation", expanded=False):
+            with st.form("add_reservation_form"):
+                guest_opts = {g["full_name"]: g["guest_id"] for g in run_q("SELECT guest_id, full_name FROM guests ORDER BY full_name")}
+                room_opts = {r["room_number"]: r["room_id"] for r in run_q("SELECT room_id, room_number FROM rooms ORDER BY room_number")}
+                if not guest_opts or not room_opts:
+                    st.info("Guests and rooms must exist before creating a reservation.")
+                else:
+                    new_res_guest = st.selectbox("Guest", list(guest_opts.keys()))
+                    new_res_room = st.selectbox("Room", list(room_opts.keys()))
+                    ci, co = st.columns(2)
+                    with ci:
+                        new_ci = st.date_input("Check-In", value=today_dt)
+                    with co:
+                        new_co_min = new_ci + timedelta(days=1)
+                        new_co = st.date_input("Check-Out", value=new_co_min, min_value=new_co_min)
+                    new_status = st.selectbox("Status", ["pending", "active", "cancelled"])
+
+                    if st.form_submit_button("Create Reservation"):
+                        if _overlaps(room_opts[new_res_room], new_ci, new_co):
+                            st.error("Selected room is already booked for the chosen dates.")
+                        else:
+                            try:
+                                run_write(
+                                    """
+                                    INSERT INTO reservations
+                                        (guest_id, guest_name, room_id, check_in_date, check_out_date, checkout_time, reservation_status, created_at, updated_at)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                                    """,
+                                    (
+                                        guest_opts[new_res_guest],
+                                        new_res_guest,
+                                        room_opts[new_res_room],
+                                        new_ci,
+                                        new_co,
+                                        _CHECKOUT_TIME,
+                                        new_status,
+                                    ),
+                                )
+                                if new_status == 'active':
+                                    run_write("UPDATE rooms SET status = 'occupied' WHERE room_id = %s", (room_opts[new_res_room],))
+                                st.success(f"Reservation created for {new_res_guest} in Room {new_res_room}.")
+                                st.rerun()
+                            except RuntimeError as e:
+                                st.error(str(e))
+
+    with c_redit:
+        with st.expander("Edit Reservation", expanded=False):
+            all_res = run_q("""
+                SELECT res.reservation_id, COALESCE(res.guest_name, g.full_name) AS guest_name, r.room_number,
+                       res.check_in_date, res.check_out_date, res.reservation_status,
+                       res.room_id
+                FROM reservations res
+                JOIN guests g ON g.guest_id = res.guest_id
+                JOIN rooms r ON r.room_id = res.room_id
+                ORDER BY res.reservation_id DESC
+            """)
+            if all_res:
+                res_edit_map = {
+                    f"#{r['reservation_id']} - Room {r['room_number']} | {r['guest_name']} "
+                    f"({r['check_in_date']} -> {r['check_out_date']}) [{r['reservation_status']}]": r
+                    for r in all_res
+                }
+                sel_edit_res = st.selectbox("Select Reservation", list(res_edit_map.keys()), key="edit_res_select")
+                tgt_edit_res = res_edit_map[sel_edit_res]
+
+                rm_opts = {r["room_number"]: r["room_id"] for r in run_q("SELECT room_id, room_number FROM rooms ORDER BY room_number")}
+                g_opts = {g["full_name"]: g["guest_id"] for g in run_q("SELECT guest_id, full_name FROM guests ORDER BY full_name")}
+                status_opts = ["pending", "active", "completed", "cancelled"]
+
+                with st.form("edit_reservation_form"):
+                    edit_guest_name = st.selectbox(
+                        "Guest",
+                        list(g_opts.keys()),
+                        index=list(g_opts.keys()).index(tgt_edit_res["guest_name"]) if tgt_edit_res["guest_name"] in g_opts else 0,
+                    )
+                    edit_room_num = st.selectbox(
+                        "Room",
+                        list(rm_opts.keys()),
+                        index=list(rm_opts.keys()).index(tgt_edit_res["room_number"]) if tgt_edit_res["room_number"] in rm_opts else 0,
+                    )
+                    edit_status = st.selectbox(
+                        "Status",
+                        status_opts,
+                        index=status_opts.index(tgt_edit_res["reservation_status"]) if tgt_edit_res["reservation_status"] in status_opts else 0,
+                    )
+                    eci, eco = st.columns(2)
+                    with eci:
+                        edit_ci = st.date_input("Check-In", value=tgt_edit_res["check_in_date"])
+                    with eco:
+                        edit_co_min = edit_ci + timedelta(days=1)
+                        edit_co = st.date_input("Check-Out", value=tgt_edit_res["check_out_date"], min_value=edit_co_min)
+
+                    if st.form_submit_button("Save Changes"):
+                        if _overlaps(rm_opts[edit_room_num], edit_ci, edit_co, exclude_res_id=tgt_edit_res["reservation_id"]):
+                            st.error("Selected room overlaps an existing reservation for the chosen dates.")
+                        else:
+                            try:
+                                def _update(cur):
+                                    cur.execute(
+                                        """
+                                        UPDATE reservations
+                                        SET guest_id=%s, guest_name=%s, room_id=%s, check_in_date=%s, check_out_date=%s, reservation_status=%s
+                                        WHERE reservation_id=%s
+                                        """,
+                                        (
+                                            g_opts[edit_guest_name],
+                                            edit_guest_name,
+                                            rm_opts[edit_room_num],
+                                            edit_ci,
+                                            edit_co,
+                                            edit_status,
+                                            tgt_edit_res["reservation_id"],
+                                        ),
+                                    )
+                                    cur.execute("UPDATE rooms SET status = 'occupied' WHERE room_id = %s", (rm_opts[edit_room_num],))
+
+                                run_transaction(_update)
+                                st.success("Reservation updated.")
+                                st.rerun()
+                            except RuntimeError as e:
+                                st.error(str(e))
+            else:
+                st.info("No reservations to edit.")
+
+    with c_rdel:
+        with st.expander("Delete Reservation", expanded=False):
+            all_res_list2 = run_q("""
+                SELECT res.reservation_id, COALESCE(res.guest_name, g.full_name) AS guest_name, r.room_number,
+                       res.check_in_date, res.check_out_date, res.reservation_status,
+                       res.room_id
+                FROM reservations res
+                JOIN guests g ON g.guest_id = res.guest_id
+                JOIN rooms r ON r.room_id = res.room_id
+                ORDER BY res.reservation_id DESC
+            """)
+            if all_res_list2:
+                res_del_map = {
+                    f"#{r['reservation_id']} - Room {r['room_number']} | {r['guest_name']} "
+                    f"({r['check_in_date']} -> {r['check_out_date']}) [{r['reservation_status']}]": r
+                    for r in all_res_list2
+                }
+                sel_del_res = st.selectbox("Select Reservation to Remove", list(res_del_map.keys()), key="del_res_select")
+                tgt_del_res = res_del_map[sel_del_res]
+
+                st.warning("This will permanently delete the selected reservation.")
+                if st.button("Permanently Delete Reservation", use_container_width=True, key="mg_del_res_btn"):
+                    if st.session_state.get("mg_del_res_confirm_id") == tgt_del_res["reservation_id"]:
+                        def do_mg_delete_res(cur):
+                            cur.execute("DELETE FROM reservations WHERE reservation_id = %s", (tgt_del_res["reservation_id"],))
+                            free_room_if_empty(cur, tgt_del_res["room_id"])
+
+                        try:
+                            run_transaction(do_mg_delete_res)
+                            st.session_state.pop("mg_del_res_confirm_id", None)
+                            st.toast(f"Reservation #{tgt_del_res['reservation_id']} permanently deleted.")
+                            st.rerun()
+                        except RuntimeError as e:
+                            st.error(str(e))
+                            st.session_state.pop("mg_del_res_confirm_id", None)
+                        except Exception:
+                            st.error("Deletion failed due to an unexpected error. Please try again.")
+                            st.session_state.pop("mg_del_res_confirm_id", None)
+                    else:
+                        st.session_state["mg_del_res_confirm_id"] = tgt_del_res["reservation_id"]
+                        st.warning(
+                            "Are you sure you want to permanently delete reservation "
+                            f"**#{tgt_del_res['reservation_id']}** for **{html.escape(tgt_del_res['guest_name'])}** "
+                            f"in Room **{tgt_del_res['room_number']}**? "
+                            "This cannot be undone. Click **Permanently Delete Reservation** again to confirm."
+                        )
+            else:
+                st.info("No reservations found.")
+
+
+def _render_guests_admin_section() -> None:
+    st.markdown("### Guest Profile Management")
+    c_gadd, c_gedit, c_gdel = st.columns(3)
+
+    with c_gadd:
+        with st.expander("Add New Guest", expanded=False):
+            with st.form("add_guest_form"):
+                new_name = st.text_input("Full Name", placeholder="Guest full name", max_chars=100)
+                new_email = st.text_input("Email", placeholder="email@example.com", max_chars=120)
+                add_phone_cols = st.columns([1, 2])
+                with add_phone_cols[0]:
+                    new_phone_prefix = st.selectbox(
+                        "Phone prefix",
+                        list(PHONE_PREFIX_LABELS.keys()),
+                        format_func=lambda value: PHONE_PREFIX_LABELS[value],
+                        key="new_guest_phone_prefix",
+                    )
+                with add_phone_cols[1]:
+                    new_phone = st.text_input(
+                        "Phone",
+                        placeholder="10 digits max",
+                        max_chars=10,
+                        key="new_guest_phone_local",
+                    )
+
+                if st.form_submit_button("Create Guest"):
+                    if not new_name.strip():
+                        st.error("Guest name is required.")
+                    elif not _is_valid_email(new_email):
+                        st.error("Please enter a valid email address.")
+                    elif new_phone.strip() and not _is_valid_local_phone(new_phone):
+                        st.error("Phone number must have at most 10 digits.")
+                    else:
+                        try:
+                            new_phone_value = f"{new_phone_prefix}{_normalize_local_phone_number(new_phone)}" if new_phone.strip() else None
+                            run_write(
+                                "INSERT INTO guests (full_name, email, phone) VALUES (%s, %s, %s)",
+                                (new_name.strip(), new_email.strip() or None, new_phone_value),
+                            )
+                            st.success(f"Guest '{html.escape(new_name.strip())}' added.")
+                            st.rerun()
+                        except RuntimeError as e:
+                            st.error(str(e))
+
+    with c_gedit:
+        with st.expander("Edit Guest", expanded=False):
+            all_guests_list = run_q("SELECT guest_id, full_name, email, phone FROM guests ORDER BY full_name")
+            if all_guests_list:
+                guest_edit_map = {g["full_name"]: g for g in all_guests_list}
+                sel_edit_guest = st.selectbox("Select Guest", list(guest_edit_map.keys()))
+                tgt_edit_guest = guest_edit_map[sel_edit_guest]
+                edit_guest_prefix, edit_guest_phone_local = _split_phone_prefix_and_local(tgt_edit_guest.get("phone") or "")
+
+                with st.form("edit_guest_form"):
+                    chg_name = st.text_input("Full Name", value=tgt_edit_guest["full_name"], max_chars=100)
+                    chg_email = st.text_input("Email", value=tgt_edit_guest.get("email") or "", max_chars=120)
+                    edit_phone_cols = st.columns([1, 2])
+                    with edit_phone_cols[0]:
+                        chg_phone_prefix = st.selectbox(
+                            "Phone prefix",
+                            list(PHONE_PREFIX_LABELS.keys()),
+                            index=list(PHONE_PREFIX_LABELS.keys()).index(edit_guest_prefix) if edit_guest_prefix in PHONE_PREFIX_LABELS else 0,
+                            format_func=lambda value: PHONE_PREFIX_LABELS[value],
+                            key=f"edit_guest_phone_prefix_{tgt_edit_guest['guest_id']}",
+                        )
+                    with edit_phone_cols[1]:
+                        chg_phone = st.text_input(
+                            "Phone",
+                            value=edit_guest_phone_local,
+                            placeholder="10 digits max",
+                            max_chars=10,
+                            key=f"edit_guest_phone_local_{tgt_edit_guest['guest_id']}",
+                        )
+
+                    if st.form_submit_button("Save Changes"):
+                        if not _is_valid_email(chg_email):
+                            st.error("Please enter a valid email address.")
+                        elif chg_phone.strip() and not _is_valid_local_phone(chg_phone):
+                            st.error("Phone number must have at most 10 digits.")
+                        else:
+                            try:
+                                chg_phone_value = f"{chg_phone_prefix}{_normalize_local_phone_number(chg_phone)}" if chg_phone.strip() else None
+                                run_write(
+                                    "UPDATE guests SET full_name=%s, email=%s, phone=%s WHERE guest_id=%s",
+                                    (chg_name.strip(), chg_email.strip() or None, chg_phone_value, tgt_edit_guest["guest_id"]),
+                                )
+                                st.success("Guest profile updated.")
+                                st.rerun()
+                            except RuntimeError as e:
+                                st.error(str(e))
+            else:
+                st.info("No guests to edit.")
+
+    with c_gdel:
+        with st.expander("Delete Guest", expanded=False):
+            all_guests_list2 = run_q(
+                """
+                SELECT g.guest_id, g.full_name,
+                       GROUP_CONCAT(r.room_number ORDER BY res.check_in_date SEPARATOR ', ') AS room_numbers
+                FROM guests g
+                LEFT JOIN reservations res ON res.guest_id = g.guest_id AND res.reservation_status IN ('pending','active')
+                LEFT JOIN rooms r ON r.room_id = res.room_id
+                GROUP BY g.guest_id, g.full_name
+                ORDER BY g.full_name
+                """
+            )
+            if all_guests_list2:
+                guest_del_map = {f"{g['full_name']} - {html.escape(str(g.get('room_numbers') or ''))}": g["guest_id"] for g in all_guests_list2}
+                sel_del_guest = st.selectbox("Select Guest to Remove", list(guest_del_map.keys()))
+
+                st.warning("This will also end any active/pending reservations for this guest.")
+                if st.button("Permanently Delete Guest", use_container_width=True):
+                    if st.session_state.get("mg_del_guest_confirm_id") == guest_del_map[sel_del_guest]:
+                        def do_mg_delete_guest(cur):
+                            cur.execute(
+                                "SELECT reservation_id, room_id FROM reservations "
+                                "WHERE guest_id = %s AND reservation_status IN ('pending','active')",
+                                (guest_del_map[sel_del_guest],),
+                            )
+                            related = cur.fetchall()
+                            for rel in related:
+                                cur.execute("DELETE FROM reservations WHERE reservation_id = %s", (rel["reservation_id"],))
+                                free_room_if_empty(cur, rel["room_id"])
+                            cur.execute("DELETE FROM guests WHERE guest_id = %s", (guest_del_map[sel_del_guest],))
+
+                        try:
+                            run_transaction(do_mg_delete_guest)
+                            st.session_state.pop("mg_del_guest_confirm_id", None)
+                            st.toast("Guest profile permanently deleted.")
+                            st.rerun()
+                        except RuntimeError as e:
+                            st.error(str(e))
+                            st.session_state.pop("mg_del_guest_confirm_id", None)
+                        except Exception:
+                            st.error("Guest deletion failed due to an unexpected error. Please try again.")
+                            st.session_state.pop("mg_del_guest_confirm_id", None)
+                    else:
+                        st.session_state["mg_del_guest_confirm_id"] = guest_del_map[sel_del_guest]
+                        st.warning(
+                            "Are you sure you want to permanently delete this guest profile? "
+                            "This cannot be undone. Click **Permanently Delete Guest** again to confirm."
+                        )
+            else:
+                st.info("No guests found.")
+
+
+def _render_archive_admin_section() -> None:
+    st.markdown("### Archive & Storage Management")
+    st.caption("Archived reservations are stored as compressed JSON to save disk space while keeping full history accessible.")
+
+    stats_row = run_q(
+        """
+        SELECT
+            (SELECT COUNT(*) FROM reservations)                         AS live_reservations,
+            (SELECT COUNT(*) FROM guests)                               AS total_guests,
+            (SELECT COUNT(*) FROM reservations
+             WHERE reservation_status IN ('completed','cancelled'))    AS closed_reservations,
+            (SELECT COUNT(*) FROM reservation_archives)                 AS archived_reservations,
+            (SELECT COALESCE(SUM(CHAR_LENGTH(reservation_data)), 0)
+             FROM reservation_archives)                                AS archive_bytes
+        """,
+        fetch="one",
+    )
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Live Reservations", stats_row.get("live_reservations", 0) if stats_row else 0)
+    m2.metric("Closed Reservations", stats_row.get("closed_reservations", 0) if stats_row else 0)
+    m3.metric("Archived Records", stats_row.get("archived_reservations", 0) if stats_row else 0)
+    mb = stats_row.get("archive_bytes", 0) if stats_row else 0
+    m4.metric("Archive Size", f"{mb/1024/1024:.1f} MB" if mb > 1024 * 1024 else f"{mb/1024:.1f} KB")
+
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+    st.markdown("#### Automatic Archiving")
+    arc_col1, arc_col2 = st.columns([2, 1])
+    with arc_col1:
+        archive_days = st.number_input(
+            "Archive reservations older than (days)",
+            min_value=30,
+            max_value=3650,
+            value=90,
+            step=30,
+            help="Completed/cancelled reservations with check-out older than this will be moved to archive.",
+        )
+    with arc_col2:
+        st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
+        if st.button("Run Archive Now", use_container_width=True, type="primary"):
+            with st.spinner("Archiving old reservations..."):
+                try:
+                    def _run_archive(cur):
+                        from datetime import timedelta
+                        import json as _json
+
+                        cutoff = date.today() - timedelta(days=int(archive_days))
+                        cur.execute(
+                            """
+                            SELECT r.reservation_id, r.room_id, r.guest_id, r.guest_name,
+                                   r.check_in_date, r.check_out_date, r.checkout_time,
+                                   r.reservation_status, r.created_at, r.updated_at,
+                                   g.full_name AS guest_full_name, g.email AS guest_email, g.phone AS guest_phone, g.created_at AS guest_created,
+                                   rm.room_number, rt.type_name AS room_type, rt.price AS room_price, rt.capacity AS room_capacity
+                            FROM reservations r
+                            JOIN guests g ON g.guest_id = r.guest_id
+                            JOIN rooms rm ON rm.room_id = r.room_id
+                            JOIN room_types rt ON rt.room_type_id = rm.room_type_id
+                            WHERE r.reservation_status IN ('completed', 'cancelled')
+                              AND r.check_out_date < %s
+                            """,
+                            (cutoff,),
+                        )
+                        rows = cur.fetchall()
+                        for row in rows:
+                            payload = _json.dumps(row, default=str).encode("utf-8")
+                            cur.execute(
+                                "INSERT INTO reservation_archives (reservation_id, reservation_data, archived_at) VALUES (%s, %s, NOW())",
+                                (row["reservation_id"], payload),
+                            )
+                            cur.execute("DELETE FROM reservations WHERE reservation_id = %s", (row["reservation_id"],))
+
+                    run_transaction(_run_archive)
+                    st.success("Archive completed.")
+                    st.rerun()
+                except RuntimeError as e:
+                    st.error(str(e))
 
 # Page
 if st.session_state.page == "Overview":
@@ -1632,6 +2317,9 @@ if st.session_state.page == "Overview":
 elif st.session_state.page == "Reservations Table":
     st.markdown("## Reservations")
 
+    _render_reservations_admin_section()
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+
     fc1, fc2 = st.columns([1, 2])
     with fc1:
         f_status = st.selectbox("Filter Status", ["All", "pending", "active", "completed", "cancelled"])
@@ -1689,6 +2377,10 @@ elif st.session_state.page == "Reservations Table":
 # Page
 elif st.session_state.page == "Guest Info Table":
     st.markdown("## Guest Info")
+
+    _render_guests_admin_section()
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+
     search_g = st.text_input(
         "Search Directory...",
         placeholder="Type name, phone, or email...",
@@ -1734,6 +2426,9 @@ elif st.session_state.page == "Guest Info Table":
 # Page
 elif st.session_state.page == "Rooms Table":
     st.markdown("## Live Room Inventory")
+
+    _render_rooms_admin_sections()
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
 
     f_rm_status = st.selectbox("Filter Status", ["All", "available", "occupied", "maintenance"])
     today = now_npl().date()
@@ -1781,605 +2476,7 @@ elif st.session_state.page == "Rooms Table":
         st.info("No matching rooms found.")
 
 # Page
-elif st.session_state.page == "Settings":
-    st.markdown("## Settings")
-
-    tab_rooms, tab_types, tab_res, tab_guests, tab_archive = st.tabs(["Manage Rooms", "Manage Room Types", "Manage Reservations", "Manage Guests", "Archive & Storage"])
-
-    with tab_rooms:
-        st.markdown("### Physical Room Inventory Updates")
-        c_add, c_edit, c_del = st.columns(3)
-
-        with c_add:
-            with st.expander("Add New Room", expanded=False):
-                with st.form("add_room_form"):
-                    new_rm_num  = st.text_input("Room Number (Unique)", placeholder="e.g., 105", max_chars=20)
-                    rt_choices  = run_q("SELECT room_type_id, type_name FROM room_types")
-                    rt_map      = {r["type_name"]: r["room_type_id"] for r in rt_choices} if rt_choices else {}
-                    new_rm_type = st.selectbox("Assign Category", list(rt_map.keys()) if rt_map else ["- Setup Types First -"])
-                    new_rm_stat = st.selectbox("Initial Status", ["available", "occupied", "maintenance"])
-
-                    if st.form_submit_button("Create Room"):
-                        if not new_rm_num.strip() or not rt_map:
-                            st.error("Room number and a valid category are required.")
-                        else:
-                            try:
-                                run_write(
-                                    "INSERT INTO rooms (room_number, room_type_id, status) VALUES (%s, %s, %s)",
-                                    (new_rm_num.strip(), rt_map[new_rm_type], new_rm_stat),
-                                )
-                                st.success(f"Room {html.escape(new_rm_num.strip())} added.")
-                                st.rerun()
-                            except RuntimeError as e:
-                                st.error(str(e))
-
-        with c_edit:
-            with st.expander("Edit Room", expanded=False):
-                all_rooms_list = run_q("SELECT room_id, room_number, room_type_id, status FROM rooms ORDER BY room_number")
-                if all_rooms_list:
-                    rm_edit_map  = {f"Room {r['room_number']}": r for r in all_rooms_list}
-                    sel_edit_rm  = st.selectbox("Select Room", list(rm_edit_map.keys()))
-                    tgt_edit_rm  = rm_edit_map[sel_edit_rm]
-
-                    with st.form("edit_room_form"):
-                        chg_rm_num  = st.text_input("Room Number", value=str(tgt_edit_rm["room_number"]), max_chars=20)
-                        rt_choices2 = run_q("SELECT room_type_id, type_name FROM room_types")
-                        rt_map2     = {r["type_name"]: r["room_type_id"] for r in rt_choices2} if rt_choices2 else {}
-                        current_type_name = next((k for k, v in rt_map2.items() if v == tgt_edit_rm["room_type_id"]), None)
-                        chg_rm_type = st.selectbox(
-                            "Category",
-                            list(rt_map2.keys()),
-                            index=list(rt_map2.keys()).index(current_type_name) if current_type_name else 0,
-                        )
-                        status_list = ["available", "occupied", "maintenance"]
-                        chg_rm_stat = st.selectbox(
-                            "Status", status_list,
-                            index=status_list.index(tgt_edit_rm["status"]),
-                        )
-
-                        if st.form_submit_button("Save Changes"):
-                            try:
-                                rowcount = run_write("""
-                                    UPDATE rooms SET room_number=%s, room_type_id=%s, status=%s
-                                    WHERE room_id=%s
-                                    AND NOT EXISTS (
-                                        SELECT 1 FROM reservations
-                                        WHERE room_id=%s AND reservation_status IN ('pending','active')
-                                    )
-                                """, (chg_rm_num.strip(), rt_map2[chg_rm_type], chg_rm_stat,
-                                      tgt_edit_rm["room_id"], tgt_edit_rm["room_id"]))
-                                if rowcount == 0:
-                                    st.error("Cannot modify: room has an active reservation, or it no longer exists.")
-                                else:
-                                    st.success("Room updated.")
-                                    st.rerun()
-                            except RuntimeError as e:
-                                st.error(str(e))
-                else:
-                    st.info("No rooms to edit.")
-
-        with c_del:
-            with st.expander("Delete Room", expanded=False):
-                all_rooms_list2 = run_q("SELECT room_id, room_number FROM rooms ORDER BY room_number")
-                if all_rooms_list2:
-                    rm_del_map = {f"Room {r['room_number']}": r["room_id"] for r in all_rooms_list2}
-                    sel_del_rm = st.selectbox("Select Room to Remove", list(rm_del_map.keys()))
-
-                    st.warning("Ensure this room has no active reservations before deleting.")
-                    if st.button("Permanently Delete Room", use_container_width=True):
-                        any_hist = run_q(
-                            "SELECT 1 FROM reservations WHERE room_id = %s LIMIT 1",
-                            (rm_del_map[sel_del_rm],), fetch="one",
-                        )
-                        if any_hist:
-                            st.error("Cannot delete: reservation history exists. Set the room to Maintenance status instead.")
-                        else:
-                            try:
-                                run_write("DELETE FROM rooms WHERE room_id = %s", (rm_del_map[sel_del_rm],))
-                                st.success("Room removed from inventory.")
-                                st.rerun()
-                            except RuntimeError as e:
-                                st.error(str(e))
-                else:
-                    st.info("No rooms found.")
-
-    with tab_res:
-        st.markdown("### Reservation Management")
-        c_radd, c_redit, c_rdel = st.columns(3)
-
-        today_dt = now_npl().date()
-
-        def _overlaps(room_id, checkin, checkout, exclude_res_id=None):
-            sql = """
-                SELECT 1 FROM reservations
-                WHERE room_id = %s
-                  AND reservation_status IN ('pending', 'active')
-                  AND check_in_date < %s
-                  AND check_out_date > %s
-            """
-            params = [room_id, checkout, checkin]
-            if exclude_res_id:
-                sql += " AND reservation_id != %s"
-                params.append(exclude_res_id)
-            rows = run_q(sql, tuple(params))
-            return bool(rows)
-
-        with c_radd:
-            with st.expander("Add New Reservation", expanded=False):
-                with st.form("add_reservation_form"):
-                    guest_opts = {g["full_name"]: g["guest_id"] for g in run_q("SELECT guest_id, full_name FROM guests ORDER BY full_name")}
-                    room_opts = {r["room_number"]: r["room_id"] for r in run_q("SELECT room_id, room_number FROM rooms ORDER BY room_number")}
-                    if not guest_opts or not room_opts:
-                        st.info("Guests and rooms must exist before creating a reservation.")
-                    else:
-                        new_res_guest = st.selectbox("Guest", list(guest_opts.keys()))
-                        new_res_room = st.selectbox("Room", list(room_opts.keys()))
-                        ci, co = st.columns(2)
-                        with ci:
-                            new_ci = st.date_input("Check-In", value=today_dt)
-                        with co:
-                            new_co_min = new_ci + timedelta(days=1)
-                            new_co = st.date_input("Check-Out", value=new_co_min, min_value=new_co_min)
-                        new_status = st.selectbox("Status", ["pending", "active", "cancelled"])
-
-                        if st.form_submit_button("Create Reservation"):
-                            if _overlaps(room_opts[new_res_room], new_ci, new_co):
-                                st.error("Selected room is already booked for the chosen dates.")
-                            else:
-                                try:
-                                    run_write(
-                                        """
-                                        INSERT INTO reservations
-                                            (guest_id, guest_name, room_id, check_in_date, check_out_date, checkout_time, reservation_status, created_at, updated_at)
-                                        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-                                        """,
-                                        (
-                                            guest_opts[new_res_guest],
-                                            new_res_guest,
-                                            room_opts[new_res_room],
-                                            new_ci,
-                                            new_co,
-                                            _CHECKOUT_TIME,
-                                            new_status,
-                                        ),
-                                    )
-                                    if new_status == 'active':
-                                        run_write(
-                                            "UPDATE rooms SET status = 'occupied' WHERE room_id = %s",
-                                            (room_opts[new_res_room],),
-                                        )
-                                    st.success(f"Reservation created for {new_res_guest} in Room {new_res_room}.")
-                                    st.rerun()
-                                except RuntimeError as e:
-                                    st.error(str(e))
-
-        with c_redit:
-            with st.expander("Edit Reservation", expanded=False):
-                all_res = run_q("""
-                    SELECT res.reservation_id, COALESCE(res.guest_name, g.full_name) AS guest_name, r.room_number,
-                           res.check_in_date, res.check_out_date, res.reservation_status,
-                           res.room_id
-                    FROM reservations res
-                    JOIN guests g ON g.guest_id = res.guest_id
-                    JOIN rooms r ON r.room_id = res.room_id
-                    ORDER BY res.reservation_id DESC
-                """)
-                if all_res:
-                    res_edit_map = {
-                        f"#{r['reservation_id']} - Room {r['room_number']} | {r['guest_name']} "
-                        f"({r['check_in_date']} -> {r['check_out_date']}) [{r['reservation_status']}]": r
-                        for r in all_res
-                    }
-                    sel_edit_res = st.selectbox("Select Reservation", list(res_edit_map.keys()), key="edit_res_select")
-                    tgt_edit_res = res_edit_map[sel_edit_res]
-
-                    rm_opts = {r["room_number"]: r["room_id"] for r in run_q("SELECT room_id, room_number FROM rooms ORDER BY room_number")}
-                    g_opts = {g["full_name"]: g["guest_id"] for g in run_q("SELECT guest_id, full_name FROM guests ORDER BY full_name")}
-                    status_opts = ["pending", "active", "completed", "cancelled"]
-
-                    with st.form("edit_reservation_form"):
-                        edit_guest_name = st.selectbox(
-                            "Guest",
-                            list(g_opts.keys()),
-                            index=list(g_opts.keys()).index(tgt_edit_res["guest_name"]) if tgt_edit_res["guest_name"] in g_opts else 0
-                        )
-                        edit_room_num = st.selectbox("Room", list(rm_opts.keys()), index=list(rm_opts.keys()).index(tgt_edit_res["room_number"]) if tgt_edit_res["room_number"] in rm_opts else 0)
-                        edit_status = st.selectbox("Status", status_opts, index=status_opts.index(tgt_edit_res["reservation_status"]) if tgt_edit_res["reservation_status"] in status_opts else 0)
-                        eci, eco = st.columns(2)
-                        with eci:
-                            edit_ci = st.date_input("Check-In", value=tgt_edit_res["check_in_date"])
-                        with eco:
-                            edit_co_min = edit_ci + timedelta(days=1)
-                            edit_co = st.date_input("Check-Out", value=tgt_edit_res["check_out_date"], min_value=edit_co_min)
-
-                        if st.form_submit_button("Save Changes"):
-                            if _overlaps(rm_opts[edit_room_num], edit_ci, edit_co, exclude_res_id=tgt_edit_res["reservation_id"]):
-                                st.error("Selected room overlaps an existing reservation for the chosen dates.")
-                            else:
-                                try:
-                                    def _update(cur):
-                                        cur.execute(
-                                            """
-                                            UPDATE reservations
-                                            SET guest_id=%s, guest_name=%s, room_id=%s, check_in_date=%s, check_out_date=%s, reservation_status=%s
-                                            WHERE reservation_id=%s
-                                            """,
-                                            (
-                                                g_opts[edit_guest_name],
-                                                edit_guest_name,
-                                                rm_opts[edit_room_num],
-                                                edit_ci,
-                                                edit_co,
-                                                edit_status,
-                                                tgt_edit_res["reservation_id"],
-                                            ),
-                                        )
-                                        cur.execute(
-                                            "UPDATE rooms SET status = 'occupied' WHERE room_id = %s",
-                                            (rm_opts[edit_room_num],),
-                                        )
-                                    run_transaction(_update)
-                                    st.success("Reservation updated.")
-                                    st.rerun()
-                                except RuntimeError as e:
-                                    st.error(str(e))
-                else:
-                    st.info("No reservations to edit.")
-
-        with c_rdel:
-            with st.expander("Delete Reservation", expanded=False):
-                all_res_list2 = run_q("""
-                    SELECT res.reservation_id, COALESCE(res.guest_name, g.full_name) AS guest_name, r.room_number,
-                           res.check_in_date, res.check_out_date, res.reservation_status,
-                           res.room_id
-                    FROM reservations res
-                    JOIN guests g ON g.guest_id = res.guest_id
-                    JOIN rooms r ON r.room_id = res.room_id
-                    ORDER BY res.reservation_id DESC
-                """)
-                if all_res_list2:
-                    res_del_map = {
-                        f"#{r['reservation_id']} - Room {r['room_number']} | {r['guest_name']} "
-                        f"({r['check_in_date']} -> {r['check_out_date']}) [{r['reservation_status']}]": r
-                        for r in all_res_list2
-                    }
-                    sel_del_res = st.selectbox("Select Reservation to Remove", list(res_del_map.keys()), key="del_res_select")
-                    tgt_del_res = res_del_map[sel_del_res]
-
-                    st.warning("This will permanently delete the selected reservation.")
-                    if st.button("Permanently Delete Reservation", use_container_width=True, key="mg_del_res_btn"):
-                        if st.session_state.get("mg_del_res_confirm_id") == tgt_del_res["reservation_id"]:
-                            def do_mg_delete_res(cur):
-                                cur.execute("DELETE FROM reservations WHERE reservation_id = %s", (tgt_del_res["reservation_id"],))
-                                free_room_if_empty(cur, tgt_del_res["room_id"])
-
-                            try:
-                                run_transaction(do_mg_delete_res)
-                                st.session_state.pop("mg_del_res_confirm_id", None)
-                                st.toast(f"Reservation #{tgt_del_res['reservation_id']} permanently deleted.")
-                                st.rerun()
-                            except RuntimeError as e:
-                                st.error(str(e))
-                                st.session_state.pop("mg_del_res_confirm_id", None)
-                            except Exception:
-                                st.error("Deletion failed due to an unexpected error. Please try again.")
-                                st.session_state.pop("mg_del_res_confirm_id", None)
-                        else:
-                            st.session_state["mg_del_res_confirm_id"] = tgt_del_res["reservation_id"]
-                            st.warning(
-                                "Are you sure you want to permanently delete reservation "
-                                f"**#{tgt_del_res['reservation_id']}** for **{html.escape(tgt_del_res['guest_name'])}** "
-                                f"in Room **{tgt_del_res['room_number']}**? "
-                                "This cannot be undone. Click **Permanently Delete Reservation** again to confirm."
-                            )
-                else:
-                    st.info("No reservations found.")
-
-    with tab_types:
-        st.markdown("### Room Category & Pricing")
-        c_tadd, c_tedit, c_tdel = st.columns(3)
-
-        with c_tadd:
-            with st.expander("Add New Room Type", expanded=False):
-                with st.form("add_type_form"):
-                    nt_name = st.text_input("Category Name", placeholder="e.g., Deluxe Forest Suite", max_chars=100)
-                    nt_cap  = st.number_input("Max Capacity (Guests)", min_value=1, value=2)
-                    nt_prc  = st.number_input("Base Rate per Night (NPR)", min_value=0.0, value=5000.0, step=500.0)
-
-                    if st.form_submit_button("Add Category"):
-                        if not nt_name.strip():
-                            st.error("Category name is required.")
-                        else:
-                            try:
-                                run_write(
-                                    "INSERT INTO room_types (type_name, capacity, price) VALUES (%s, %s, %s)",
-                                    (nt_name.strip(), int(nt_cap), float(nt_prc)),
-                                )
-                                st.success(f"Category '{html.escape(nt_name.strip())}' added.")
-                                st.rerun()
-                            except RuntimeError as e:
-                                st.error(str(e))
-
-        with c_tedit:
-            with st.expander("Edit Category", expanded=False):
-                all_types_list = run_q("SELECT room_type_id, type_name, capacity, price FROM room_types ORDER BY type_name")
-                if all_types_list:
-                    type_edit_map  = {t["type_name"]: t for t in all_types_list}
-                    sel_edit_type  = st.selectbox("Select Category", list(type_edit_map.keys()))
-                    tgt_edit_type  = type_edit_map[sel_edit_type]
-
-                    with st.form("edit_type_form"):
-                        chg_t_name = st.text_input("Name",     value=tgt_edit_type["type_name"], max_chars=100)
-                        chg_t_cap  = st.number_input("Max Capacity", min_value=1, value=int(tgt_edit_type["capacity"]))
-                        chg_t_prc  = st.number_input("Rate per Night", min_value=0.0, value=float(tgt_edit_type["price"]), step=500.0)
-
-                        if st.form_submit_button("Save Changes"):
-                            try:
-                                run_write(
-                                    "UPDATE room_types SET type_name=%s, capacity=%s, price=%s WHERE room_type_id=%s",
-                                    (chg_t_name.strip(), int(chg_t_cap), float(chg_t_prc), tgt_edit_type["room_type_id"]),
-                                )
-                                st.success("Category updated.")
-                                st.rerun()
-                            except RuntimeError as e:
-                                st.error(str(e))
-                else:
-                    st.info("No categories exist yet.")
-
-        with c_tdel:
-            with st.expander("Delete Category", expanded=False):
-                all_types_list2 = run_q("SELECT room_type_id, type_name FROM room_types ORDER BY type_name")
-                if all_types_list2:
-                    type_del_map  = {t["type_name"]: t["room_type_id"] for t in all_types_list2}
-                    sel_del_type  = st.selectbox("Select Category to Delete", list(type_del_map.keys()))
-
-                    st.warning("All rooms assigned to this category must be reassigned or deleted first.")
-                    if st.button("Delete Category", use_container_width=True):
-                        in_use = run_q(
-                            "SELECT 1 FROM rooms WHERE room_type_id = %s LIMIT 1",
-                            (type_del_map[sel_del_type],), fetch="one",
-                        )
-                        if in_use:
-                            st.error("Cannot delete: rooms are assigned to this category. Reassign or delete them first.")
-                        else:
-                            try:
-                                run_write(
-                                    "DELETE FROM room_types WHERE room_type_id = %s",
-                                    (type_del_map[sel_del_type],),
-                                )
-                                st.success("Category deleted.")
-                                st.rerun()
-                            except RuntimeError as e:
-                                st.error(str(e))
-                else:
-                    st.info("No categories found.")
-
-    with tab_guests:
-        st.markdown("### Guest Profile Management")
-        c_gadd, c_gedit, c_gdel = st.columns(3)
-
-        with c_gadd:
-            with st.expander("Add New Guest", expanded=False):
-                with st.form("add_guest_form"):
-                    new_name = st.text_input("Full Name", placeholder="Guest full name", max_chars=100)
-                    new_email = st.text_input("Email", placeholder="email@example.com", max_chars=120)
-                    new_phone = st.text_input("Phone", placeholder="+977-98xxxxxxx", max_chars=20)
-
-                    if st.form_submit_button("Create Guest"):
-                        if not new_name.strip():
-                            st.error("Guest name is required.")
-                        else:
-                            try:
-                                run_write(
-                                    "INSERT INTO guests (full_name, email, phone) VALUES (%s, %s, %s)",
-                                    (new_name.strip(), new_email.strip() or None, new_phone.strip() or None),
-                                )
-                                st.success(f"Guest '{html.escape(new_name.strip())}' added.")
-                                st.rerun()
-                            except RuntimeError as e:
-                                st.error(str(e))
-
-        with c_gedit:
-            with st.expander("Edit Guest", expanded=False):
-                all_guests_list = run_q("SELECT guest_id, full_name, email, phone FROM guests ORDER BY full_name")
-                if all_guests_list:
-                    guest_edit_map = {g["full_name"]: g for g in all_guests_list}
-                    sel_edit_guest = st.selectbox("Select Guest", list(guest_edit_map.keys()))
-                    tgt_edit_guest = guest_edit_map[sel_edit_guest]
-
-                    with st.form("edit_guest_form"):
-                        chg_name = st.text_input("Full Name", value=tgt_edit_guest["full_name"], max_chars=100)
-                        chg_email = st.text_input("Email", value=tgt_edit_guest.get("email") or "", max_chars=120)
-                        chg_phone = st.text_input("Phone", value=tgt_edit_guest.get("phone") or "", max_chars=20)
-
-                        if st.form_submit_button("Save Changes"):
-                            try:
-                                run_write(
-                                    "UPDATE guests SET full_name=%s, email=%s, phone=%s WHERE guest_id=%s",
-                                    (chg_name.strip(), chg_email.strip() or None, chg_phone.strip() or None, tgt_edit_guest["guest_id"]),
-                                )
-                                st.success("Guest profile updated.")
-                                st.rerun()
-                            except RuntimeError as e:
-                                st.error(str(e))
-                else:
-                    st.info("No guests to edit.")
-
-        with c_gdel:
-            with st.expander("Delete Guest", expanded=False):
-                all_guests_list2 = run_q(
-                    """
-                    SELECT g.guest_id, g.full_name,
-                           GROUP_CONCAT(r.room_number ORDER BY res.check_in_date SEPARATOR ', ') AS room_numbers
-                    FROM guests g
-                    LEFT JOIN reservations res ON res.guest_id = g.guest_id AND res.reservation_status IN ('pending','active')
-                    LEFT JOIN rooms r ON r.room_id = res.room_id
-                    GROUP BY g.guest_id, g.full_name
-                    ORDER BY g.full_name
-                    """
-                )
-                if all_guests_list2:
-                    guest_del_map = {f"{g['full_name']} - {html.escape(str(g.get('room_numbers') or ''))}": g["guest_id"] for g in all_guests_list2}
-                    sel_del_guest = st.selectbox("Select Guest to Remove", list(guest_del_map.keys()))
-
-                    st.warning("This will also end any active/pending reservations for this guest.")
-                    if st.button("Permanently Delete Guest", use_container_width=True):
-                        if st.session_state.get("mg_del_guest_confirm_id") == guest_del_map[sel_del_guest]:
-                            def do_mg_delete_guest(cur):
-                                cur.execute(
-                                    "SELECT reservation_id, room_id FROM reservations "
-                                    "WHERE guest_id = %s AND reservation_status IN ('pending','active')",
-                                    (guest_del_map[sel_del_guest],),
-                                )
-                                related = cur.fetchall()
-                                for rel in related:
-                                    cur.execute("DELETE FROM reservations WHERE reservation_id = %s", (rel["reservation_id"],))
-                                    free_room_if_empty(cur, rel["room_id"])
-                                cur.execute("DELETE FROM guests WHERE guest_id = %s", (guest_del_map[sel_del_guest],))
-
-                            try:
-                                run_transaction(do_mg_delete_guest)
-                                st.session_state.pop("mg_del_guest_confirm_id", None)
-                                st.toast("Guest profile permanently deleted.")
-                                st.rerun()
-                            except RuntimeError as e:
-                                st.error(str(e))
-                                st.session_state.pop("mg_del_guest_confirm_id", None)
-                            except Exception:
-                                st.error("Guest deletion failed due to an unexpected error. Please try again.")
-                                st.session_state.pop("mg_del_guest_confirm_id", None)
-                        else:
-                            st.session_state["mg_del_guest_confirm_id"] = guest_del_map[sel_del_guest]
-                            st.warning(
-                                "Are you sure you want to permanently delete this guest profile? "
-                                "This cannot be undone. Click **Permanently Delete Guest** again to confirm."
-                            )
-                else:
-                    st.info("No guests found.")
-
-    with tab_archive:
-        st.markdown("### Archive & Storage Management")
-        st.caption("Archived reservations are stored as compressed JSON to save disk space while keeping full history accessible.")
-
-        stats_row = run_q("""
-            SELECT
-                (SELECT COUNT(*) FROM reservations)                         AS live_reservations,
-                (SELECT COUNT(*) FROM guests)                               AS total_guests,
-                (SELECT COUNT(*) FROM reservations
-                 WHERE reservation_status IN ('completed','cancelled'))    AS closed_reservations,
-                (SELECT COUNT(*) FROM reservation_archives)                 AS archived_reservations,
-                (SELECT COALESCE(SUM(CHAR_LENGTH(reservation_data)), 0)
-                 FROM reservation_archives)                                AS archive_bytes
-        """, fetch="one")
-
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Live Reservations", stats_row.get("live_reservations", 0) if stats_row else 0)
-        m2.metric("Closed Reservations", stats_row.get("closed_reservations", 0) if stats_row else 0)
-        m3.metric("Archived Records", stats_row.get("archived_reservations", 0) if stats_row else 0)
-        mb = stats_row.get("archive_bytes", 0) if stats_row else 0
-        m4.metric("Archive Size", f"{mb/1024/1024:.1f} MB" if mb > 1024*1024 else f"{mb/1024:.1f} KB")
-
-        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-        st.markdown("#### Automatic Archiving")
-        arc_col1, arc_col2 = st.columns([2, 1])
-        with arc_col1:
-            archive_days = st.number_input(
-                "Archive reservations older than (days)",
-                min_value=30, max_value=3650, value=90, step=30,
-                help="Completed/cancelled reservations with check-out older than this will be moved to archive."
-            )
-        with arc_col2:
-            st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
-            if st.button("Run Archive Now", use_container_width=True, type="primary"):
-                with st.spinner("Archiving old reservations..."):
-                    try:
-                        def _run_archive(cur):
-                            from datetime import timedelta
-                            import json as _json
-                            cutoff = date.today() - timedelta(days=int(archive_days))
-                            cur.execute("""
-                                SELECT r.reservation_id, r.room_id, r.guest_id, r.guest_name,
-                                       r.check_in_date, r.check_out_date, r.checkout_time,
-                                       r.reservation_status, r.created_at, r.updated_at,
-                                       g.full_name AS guest_full_name, g.email AS guest_email, g.phone AS guest_phone, g.created_at AS guest_created,
-                                       rm.room_number, rt.type_name AS room_type, rt.price AS room_price, rt.capacity AS room_capacity
-                                FROM reservations r
-                                JOIN guests g ON g.guest_id = r.guest_id
-                                JOIN rooms rm ON rm.room_id = r.room_id
-                                JOIN room_types rt ON rt.room_type_id = rm.room_type_id
-                                WHERE r.reservation_status IN ('completed','cancelled')
-                                  AND r.check_out_date < %s
-                                ORDER BY r.check_out_date ASC
-                                LIMIT 5000
-                            """, (cutoff,))
-                            rows = cur.fetchall()
-                            archived = 0
-                            for row in rows:
-                                cur.execute("""
-                                    INSERT INTO reservation_archives (reservation_data, guest_snapshot, room_snapshot, archive_reason)
-                                    VALUES (%s, %s, %s, %s)
-                                """, (
-                                    _json.dumps({
-                                        "reservation_id": row["reservation_id"],
-                                        "room_id": row["room_id"],
-                                        "guest_id": row["guest_id"],
-                                        "guest_name": row["guest_name"],
-                                        "check_in_date": str(row["check_in_date"]),
-                                        "check_out_date": str(row["check_out_date"]),
-                                        "checkout_time": str(row["checkout_time"]) if row["checkout_time"] else None,
-                                        "reservation_status": row["reservation_status"],
-                                        "created_at": str(row["created_at"]),
-                                        "updated_at": str(row["updated_at"]),
-                                    }, ensure_ascii=False),
-                                    _json.dumps({
-                                        "guest_id": row["guest_id"],
-                                        "full_name": row["guest_full_name"],
-                                        "email": row["guest_email"],
-                                        "phone": row["guest_phone"],
-                                        "created_at": str(row["guest_created"]),
-                                    }, ensure_ascii=False),
-                                    _json.dumps({
-                                        "room_id": row["room_id"],
-                                        "room_number": row["room_number"],
-                                        "room_type": row["room_type"],
-                                        "room_price": float(row["room_price"]) if row["room_price"] else 0.0,
-                                        "room_capacity": row["room_capacity"],
-                                    }, ensure_ascii=False),
-                                    "completed_aged" if row["reservation_status"] == "completed" else "cancelled_aged",
-                                ))
-                                cur.execute("DELETE FROM reservations WHERE reservation_id = %s", (row["reservation_id"],))
-                                archived += 1
-                            return archived
-                        count = run_transaction(_run_archive)
-                        st.toast(f"Archived {count} old reservations.", icon="✅")
-                        st.rerun()
-                    except RuntimeError as e:
-                        st.error(str(e))
-                    except Exception as e:
-                        st.error(f"Archive failed: {e}")
-
-        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-        st.markdown("#### Recent Archive Log")
-        recent_archives = run_q("""
-            SELECT archive_id, reservation_data, guest_snapshot, room_snapshot, archived_at, archive_reason
-            FROM reservation_archives
-            ORDER BY archived_at DESC
-            LIMIT 20
-        """)
-        if recent_archives:
-            df_arc = pd.DataFrame(recent_archives)
-            df_arc["reservation_id"] = df_arc["reservation_data"].apply(lambda x: x.get("reservation_id", "") if isinstance(x, dict) else "")
-            df_arc["guest_name"] = df_arc["guest_snapshot"].apply(lambda x: x.get("full_name", "") if isinstance(x, dict) else "")
-            df_arc["room_number"] = df_arc["room_snapshot"].apply(lambda x: x.get("room_number", "") if isinstance(x, dict) else "")
-            df_arc["archived_at"] = df_arc["archived_at"].apply(lambda x: str(x) if x else "")
-            st.dataframe(
-                df_arc[["archive_id", "reservation_id", "guest_name", "room_number", "archived_at", "archive_reason"]].rename(columns={
-                    "archive_id": "ID", "reservation_id": "Res ID", "guest_name": "Guest",
-                    "room_number": "Room", "archived_at": "Archived At", "archive_reason": "Reason"
-                }),
-                use_container_width=True, hide_index=True
-            )
-        else:
-            st.info("No archived records yet.")
-
-    st.markdown("---")
+elif st.session_state.page == "Archive & Storage":
+    st.markdown("## Archive & Storage")
+    _render_archive_admin_section()
+    st.stop()

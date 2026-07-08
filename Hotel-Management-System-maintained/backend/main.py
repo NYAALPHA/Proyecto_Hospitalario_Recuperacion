@@ -11,7 +11,7 @@ from decimal import Decimal
 from datetime import date, datetime, time as dt_time
 from typing import List, Self
 from urllib.error import HTTPError, URLError
-from urllib.request import urlopen
+from urllib.request import Request as UrlRequest, urlopen
 
 import pytz
 import mysql.connector
@@ -37,8 +37,10 @@ class _RequestIdFilter(logging.Filter):
 
 logger = logging.getLogger(__name__)
 
-_PHONE_PREFIX_API_URL = "https://restcountries.com/v3.1/all?fields=idd"
+_PHONE_PREFIX_API_BASE_URL = "https://api.restcountries.com/countries/v5"
+_PHONE_PREFIX_API_FIELDS = "calling_codes,names.common,codes.alpha_2,flag.emoji"
 _PHONE_PREFIX_FALLBACK = {"+977", "+593"}
+_REST_COUNTRIES_API_KEY_FALLBACK = "rc_live_187488edc94b4d608f9992d6a7cdcfd6"
 
 # Token
 _ADMIN_TOKEN_PLACEHOLDER = "replace_with_a_strong_random_secret"
@@ -73,6 +75,40 @@ def now_nepal() -> datetime:
     return datetime.now(_NEPAL_TZ)
 
 
+def _get_rest_countries_api_key() -> str:
+    secret_path = "/run/secrets/restcountries_api_key"
+    if os.path.exists(secret_path):
+        with open(secret_path, "r", encoding="utf-8") as file_handle:
+            return file_handle.read().strip()
+    return os.getenv("REST_COUNTRIES_API_KEY", _REST_COUNTRIES_API_KEY_FALLBACK).strip()
+
+
+def _alpha2_to_flag(alpha2: str | None) -> str:
+    if not alpha2 or len(alpha2) != 2:
+        return "🌐"
+    return "".join(chr(ord(char) + 127397) for char in alpha2.upper())
+
+
+def _fetch_rest_countries_countries(offset: int = 0, limit: int = 100) -> tuple[list[dict], bool]:
+    api_key = _get_rest_countries_api_key()
+    if not api_key:
+        return [], False
+
+    request_url = (
+        f"{_PHONE_PREFIX_API_BASE_URL}"
+        f"?limit={limit}&offset={offset}&response_fields={_PHONE_PREFIX_API_FIELDS}"
+    )
+    request = UrlRequest(request_url, headers={"Authorization": f"Bearer {api_key}"})
+    with urlopen(request, timeout=5) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    data = payload.get("data") if isinstance(payload, dict) else {}
+    objects = data.get("objects") if isinstance(data, dict) else []
+    meta = data.get("meta") if isinstance(data, dict) else {}
+    more = bool(meta.get("more")) if isinstance(meta, dict) else False
+    return objects if isinstance(objects, list) else [], more
+
+
 def _load_phone_prefix_options() -> list[dict[str, str]]:
     cached = globals().get("_PHONE_PREFIX_CACHE")
     if isinstance(cached, list) and cached:
@@ -83,44 +119,51 @@ def _load_phone_prefix_options() -> list[dict[str, str]]:
         {"value": "+593", "label": "🇪🇨 +593 Ecuador"},
     ]
     try:
-        with urlopen(_PHONE_PREFIX_API_URL, timeout=5) as response:
-            countries = json.loads(response.read().decode("utf-8"))
+        discovered: dict[str, str] = {}
+        offset = 0
+        while True:
+            countries, more = _fetch_rest_countries_countries(offset=offset, limit=100)
+            if not countries:
+                break
+
+            for country in countries:
+                if not isinstance(country, dict):
+                    continue
+
+                names = country.get("names") or {}
+                codes = country.get("codes") or {}
+                flag = (country.get("flag") or {}).get("emoji") or _alpha2_to_flag(str(codes.get("alpha_2") or "").strip())
+                country_name = str((names.get("common") or "")).strip()
+                calling_codes = country.get("calling_codes") or []
+
+                for calling_code in calling_codes:
+                    code_text = str(calling_code or "").strip()
+                    if not code_text:
+                        continue
+                    normalized = code_text if code_text.startswith("+") else f"+{code_text.lstrip('+')}"
+                    if not re.fullmatch(r"\+[1-9]\d{0,3}", normalized) or normalized in discovered:
+                        continue
+                    discovered[normalized] = f"{flag} {normalized} {country_name}".strip()
+
+            if not more:
+                break
+            offset += len(countries)
+
+        if discovered:
+            options = sorted(
+                [{"value": value, "label": label} for value, label in discovered.items()],
+                key=lambda item: item["label"],
+            )
+            fallback_by_value = {item["value"]: item for item in [
+                {"value": "+977", "label": "🇳🇵 +977 Nepal"},
+                {"value": "+593", "label": "🇪🇨 +593 Ecuador"},
+            ]}
+            present_values = {item["value"] for item in options}
+            for value in ("+977", "+593"):
+                if value not in present_values:
+                    options.insert(min(1, len(options)), fallback_by_value[value])
     except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError, OSError):
         return options
-
-    discovered: dict[str, str] = {}
-    if isinstance(countries, list):
-        for country in countries:
-            idd = country.get("idd") or {}
-            root = str(idd.get("root") or "").strip()
-            if not root:
-                continue
-
-            suffixes = idd.get("suffixes") or [""]
-            for suffix in suffixes:
-                suffix_text = str(suffix or "").strip()
-                code = f"{root}{suffix_text}"
-                if re.fullmatch(r"\+[1-9]\d{0,3}", code) and code not in discovered:
-                    label = str((country.get("name") or {}).get("common") or "").strip()
-                    flag = ""
-                    cca2 = str(country.get("cca2") or "").strip()
-                    if len(cca2) == 2:
-                        flag = "".join(chr(ord(char) + 127397) for char in cca2.upper())
-                    discovered[code] = f"{flag} {code} {label}".strip()
-
-    if discovered:
-        options = sorted(
-            [{"value": value, "label": label} for value, label in discovered.items()],
-            key=lambda item: item["label"],
-        )
-        fallback_by_value = {item["value"]: item for item in [
-            {"value": "+977", "label": "🇳🇵 +977 Nepal"},
-            {"value": "+593", "label": "🇪🇨 +593 Ecuador"},
-        ]}
-        present_values = {item["value"] for item in options}
-        for value in ("+977", "+593"):
-            if value not in present_values:
-                options.insert(min(1, len(options)), fallback_by_value[value])
     if options != [
         {"value": "+977", "label": "🇳🇵 +977 Nepal"},
         {"value": "+593", "label": "🇪🇨 +593 Ecuador"},

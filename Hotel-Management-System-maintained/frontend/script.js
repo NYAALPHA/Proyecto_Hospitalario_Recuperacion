@@ -21,7 +21,6 @@ const FALLBACK_PHONE_PREFIXES = [
 
 const PHONE_PREFIX_API_URLS = [
     `${RESORT_CONFIG.API_BASE}/phone-prefixes`,
-    'https://restcountries.com/v3.1/all?fields=name,idd,cca2',
 ];
 const PHONE_PREFIXES = new Set(FALLBACK_PHONE_PREFIXES.map(item => item.value));
 
@@ -74,15 +73,30 @@ function buildPhonePrefixOptions(countries) {
     return merged.sort((a, b) => a.label.localeCompare(b.label));
 }
 
+function normalizePhonePrefixPayload(payload) {
+    if (Array.isArray(payload)) {
+        return buildPhonePrefixOptions(payload);
+    }
+
+    if (!payload || !Array.isArray(payload.prefixes)) {
+        return [];
+    }
+
+    const prefixes = payload.prefixes;
+    const looksNormalized = prefixes.length > 0 && prefixes.every(item => (
+        item && typeof item.value === 'string' && typeof item.label === 'string'
+    ));
+
+    return looksNormalized ? prefixes : buildPhonePrefixOptions(prefixes);
+}
+
 async function loadPhonePrefixOptions() {
     for (const phonePrefixUrl of PHONE_PREFIX_API_URLS) {
         try {
             const response = await fetch(phonePrefixUrl, { cache: 'no-store' });
             if (!response.ok) throw new Error(`Phone prefix source returned ${response.status}`);
             const payload = await response.json();
-            const options = Array.isArray(payload)
-                ? buildPhonePrefixOptions(payload)
-                : (payload && Array.isArray(payload.prefixes) ? payload.prefixes : []);
+            const options = normalizePhonePrefixPayload(payload);
             if (options.length) return options;
         } catch (error) {
             console.warn('Phone prefix source failed:', phonePrefixUrl, error);

@@ -7,8 +7,13 @@ Run:
 
 import hmac
 import html
+import logging
+import json
 import os
+import re
+import tempfile
 import time
+import uuid
 from datetime import date, datetime, timedelta, time as dt_time
 
 import hashlib
@@ -17,8 +22,42 @@ import pandas as pd
 import pytz
 import streamlit as st
 from dotenv import load_dotenv
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 
 load_dotenv()
+
+
+def _setup_audit_logger() -> logging.Logger:
+    logger = logging.getLogger("natura_resort.dashboard.audit")
+    if logger.handlers:
+        return logger
+
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    audit_path = os.getenv(
+        "DASHBOARD_AUDIT_LOG",
+        os.path.join(tempfile.gettempdir(), "natura_resort_dashboard_audit.log"),
+    )
+    file_handler = logging.FileHandler(audit_path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    return logger
+
+
+AUDIT_LOGGER = _setup_audit_logger()
+
+
+def _audit_dashboard_event(event: str, **fields) -> None:
+    details = " ".join(f"{key}={value}" for key, value in fields.items())
+    AUDIT_LOGGER.info("AUDIT event=%s %s", event, details)
 
 
 def _read_secret(name: str, env_var: str) -> str:
@@ -215,6 +254,18 @@ div[data-testid="stSidebar"] .stButton > button:hover {
   background: #111111 !important;
   border-color: var(--accent) !important;
   color: #FFFFFF !important;
+}
+
+div[data-testid="stSidebar"] .stButton:last-of-type > button {
+    background: #B91C1C !important;
+    border-color: #7F1D1D !important;
+    color: #FFFFFF !important;
+}
+
+div[data-testid="stSidebar"] .stButton:last-of-type > button:hover {
+    background: #DC2626 !important;
+    border-color: #991B1B !important;
+    color: #FFFFFF !important;
 }
 
 /* Sidebar: compact form spacing, no line breaks */
@@ -491,14 +542,14 @@ if not _DASH_PWD:
     st.stop()
 
 _DASH_AUTH_SECRET = os.getenv("DASHBOARD_AUTH_SECRET", "") or _DASH_PWD
-_DASH_AUTH_TTL = 12 * 60 * 60  # 12 hours
+_DASH_AUTH_TTL = 365 * 24 * 60 * 60
 
 
 def _create_dashboard_auth_token(secret: str) -> str:
-    expiry = int(time.time()) + _DASH_AUTH_TTL
-    msg = f"{expiry}".encode("utf-8")
+    session_id = uuid.uuid4().hex
+    msg = session_id.encode("utf-8")
     sig = hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
-    return f"{expiry}.{sig}"
+    return f"{session_id}.{sig}"
 
 
 def _verify_dashboard_auth_token(secret: str, token: str) -> bool:
@@ -506,313 +557,526 @@ def _verify_dashboard_auth_token(secret: str, token: str) -> bool:
         parts = token.split(".", 1)
         if len(parts) != 2:
             return False
-        expiry_str, sig = parts
-        expiry = int(expiry_str)
-        if time.time() > expiry:
+        session_id, sig = parts
+        if not session_id:
             return False
-        msg = f"{expiry}".encode("utf-8")
+        msg = session_id.encode("utf-8")
         expected = hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
         return hmac.compare_digest(sig, expected)
     except Exception:
         return False
 
 
+def _clear_dashboard_auth_query_params() -> None:
+    try:
+        st.query_params.clear()
+    except Exception:
+        try:
+            del st.query_params["auth"]
+        except Exception:
+            st.query_params["auth"] = ""
+
+
+def _session_id_from_token(token: str) -> str:
+    return token.split(".", 1)[0][:8] if token else "unknown"
+
+
+def _query_param_int(name: str, default: int = 0) -> int:
+    try:
+        value = st.query_params.get(name, default)
+        if isinstance(value, list):
+            value = value[0] if value else default
+        return int(value)
+    except Exception:
+        return default
+
+
+def _set_query_param(name: str, value: int | str) -> None:
+    st.query_params[name] = str(value)
+
+
+def _clear_query_param(name: str) -> None:
+    try:
+        del st.query_params[name]
+    except Exception:
+        try:
+            st.query_params[name] = ""
+        except Exception:
+            pass
+
+
+def _clear_dashboard_security_query_params() -> None:
+    for name in ("auth", "login_attempts", "lock_until"):
+        _clear_query_param(name)
+
+
+_BACKEND_API_BASE_URL = os.getenv("BACKEND_API_BASE_URL", "http://backend:3000/api").rstrip("/")
+_PHONE_PREFIX_API_URLS = [
+    f"{_BACKEND_API_BASE_URL}/phone-prefixes",
+    "http://localhost:3000/api/phone-prefixes",
+    "https://restcountries.com/v3.1/all?fields=name,idd,cca2",
+]
+_PHONE_PREFIX_FALLBACK = {
+    "+977": "🇳🇵 +977 Nepal",
+    "+593": "🇪🇨 +593 Ecuador",
+}
+
+
+def _cca2_to_flag(cca2: str | None) -> str:
+    if not cca2 or len(cca2) != 2:
+        return "🌐"
+    return "".join(chr(ord(char) + 127397) for char in cca2.upper())
+
+
+def _load_phone_prefix_labels() -> dict[str, str]:
+    cache = getattr(st.session_state, "_phone_prefix_cache", None)
+    cache_source = getattr(st.session_state, "_phone_prefix_cache_source", "")
+    if isinstance(cache, dict) and cache and cache_source == "remote":
+        return cache
+
+    labels = dict(_PHONE_PREFIX_FALLBACK)
+    payload = None
+    for phone_prefix_url in _PHONE_PREFIX_API_URLS:
+        try:
+            with urlopen(phone_prefix_url, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+                break
+        except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError, OSError):
+            continue
+
+    if payload is None:
+        return labels
+
+    discovered: dict[str, str] = {}
+    prefixes = payload if isinstance(payload, list) else payload.get("prefixes") if isinstance(payload, dict) else []
+    if isinstance(prefixes, list):
+        for item in prefixes:
+            value = str((item or {}).get("value") or "").strip()
+            label = str((item or {}).get("label") or "").strip()
+            if value and label:
+                discovered[value] = label
+
+    if discovered:
+        labels.update(discovered)
+
+    labels = dict(sorted(labels.items(), key=lambda item: item[1]))
+    if labels != _PHONE_PREFIX_FALLBACK:
+        st.session_state._phone_prefix_cache = labels
+        st.session_state._phone_prefix_cache_source = cache_source or "remote"
+    return labels
+
+
+PHONE_PREFIX_LABELS = _load_phone_prefix_labels()
+
+
+def _normalize_local_phone_number(value: str) -> str:
+    return re.sub(r"\D", "", value or "")
+
+
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
+
+if "login_attempts" not in st.session_state:
+    st.session_state.login_attempts = 0
+
+if "dashboard_locked" not in st.session_state:
+    st.session_state.dashboard_locked = False
+
+if "dashboard_auth_token" not in st.session_state:
+    st.session_state.dashboard_auth_token = ""
+
+if "dashboard_auth_restored" not in st.session_state:
+    st.session_state.dashboard_auth_restored = False
+
+_initial_attempts = max(0, min(3, _query_param_int("login_attempts", 0)))
+_lock_until = _query_param_int("lock_until", 0)
+_lock_active = _lock_until > int(time.time())
+
+if _lock_until and not _lock_active:
+    _clear_query_param("lock_until")
+    _clear_query_param("login_attempts")
+    _lock_until = 0
+
+if _initial_attempts:
+    st.session_state.login_attempts = _initial_attempts
+
+if _lock_active:
+    st.session_state.dashboard_locked = True
+    st.session_state.login_attempts = 3
+    st.session_state.dashboard_lock_until = _lock_until
+else:
+    st.session_state.dashboard_locked = False
+    st.session_state.dashboard_lock_until = 0
 
 try:
     raw_token = st.query_params.get("auth", "")
     if raw_token and _verify_dashboard_auth_token(_DASH_AUTH_SECRET, raw_token):
         st.session_state.authenticated = True
-        st.markdown(
-            "<script>"
-            "try { if (window.history.replaceState) { window.history.replaceState({}, '', window.location.pathname); } } catch (e) {}"
-            "</script>",
-            unsafe_allow_html=True,
-        )
+        st.session_state.dashboard_auth_token = raw_token
+        if not st.session_state.dashboard_auth_restored:
+            _audit_dashboard_event("session_restored", session_id=_session_id_from_token(raw_token))
+            st.session_state.dashboard_auth_restored = True
 except Exception:
     pass
 
+if st.session_state.get("dashboard_auth_token"):
+        st.markdown(
+                f"""
+                <script>
+                (function() {{
+                    try {{
+                        localStorage.setItem('naturaDashboardAuth', {json.dumps(st.session_state.dashboard_auth_token)});
+                    }} catch (e) {{}}
+                }})();
+                </script>
+                """,
+                unsafe_allow_html=True,
+        )
+
+@st.fragment(run_every=1)
+def _render_login_lock_notice() -> None:
+    lock_until_epoch = int(getattr(st.session_state, "dashboard_lock_until", 0) or 0)
+    if lock_until_epoch <= 0:
+        return
+
+    remaining = lock_until_epoch - int(time.time())
+    if remaining <= 0:
+        st.session_state.dashboard_locked = False
+        st.session_state.dashboard_lock_until = 0
+        st.session_state.login_attempts = 0
+        _clear_query_param("login_attempts")
+        _clear_query_param("lock_until")
+        st.rerun()
+
+    minutes, seconds = divmod(remaining, 60)
+    countdown = f"{minutes:02d}:{seconds:02d}"
+    st.warning(f"Login locked after 3 failed attempts. Please wait {countdown} to try again.")
+    st.markdown(
+        f"<div style='color:#B0B8C0; font-size:0.9rem; margin-bottom:0.75rem;'>Unlocking in <strong>{countdown}</strong></div>",
+        unsafe_allow_html=True,
+    )
+
+
+login_is_locked = st.session_state.dashboard_locked and int(getattr(st.session_state, "dashboard_lock_until", 0) or 0) > int(time.time())
+
+if login_is_locked:
+    pass
+elif st.session_state.dashboard_locked:
+    st.session_state.dashboard_locked = False
+    st.session_state.dashboard_lock_until = 0
+
+
 # Login wrapper
 if not st.session_state.authenticated:
-    st.markdown("""
-    <style>
-    html, body {
-        overflow: hidden !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        height: 100vh !important;
-        width: 100vw !important;
-        background: #000000 !important;
-    }
-    html, body, [class*="css"], #root, div[data-testid="stAppViewContainer"] {
-        background-color: #000000 !important;
-        color: #F8F9FA !important;
-    }
-    .login-brand {
-        text-align: center;
-        margin-bottom: 34px;
-    }
-    .login-brand h1 {
-        font-family: 'Fira Sans', sans-serif !important;
-        font-weight: 700 !important;
-        font-size: 3rem !important;
-        letter-spacing: 0.03em;
-        margin: 0;
-        color: #FFFFFF !important;
-    }
-    .login-brand p {
-        color: #B0B8C0 !important;
-        font-size: 1.05rem !important;
-        margin-top: 10px !important;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-    }
-    .login-footer {
-        text-align: center;
-        margin-top: 26px;
-        font-size: 0.9rem !important;
-        color: #6B7280 !important;
-    }
-    .login-footer strong {
-        color: #9CA3AF !important;
-        font-weight: 500;
-    }
-    [data-testid="stColumn"]:nth-of-type(2) .stContainer {
-        background: rgba(12, 12, 12, 0.98);
-        border: 1px solid rgba(255, 255, 255, 0.10);
-        border-radius: 28px;
-        padding: 68px 42px 52px;
-        max-width: 460px;
-        box-shadow: 0 30px 70px rgba(0,0,0,0.95), 0 0 0 1px rgba(255,255,255,0.04) inset;
-        margin-top: -25vh;
-    }
-    form[data-testid="stForm"] {
-        border: 1px solid rgba(255,255,255,0.08) !important;
-        border-radius: 18px !important;
-        padding: 24px !important;
-        background: rgba(18,18,18,0.8) !important;
-    }
-    /* Force password input: hide any red/hidden border, show white only on focus */
-    form[data-testid="stForm"] .stTextInput,
-    form[data-testid="stForm"] .stTextInput > div,
-    form[data-testid="stForm"] .stTextInput > div > div,
-    form[data-testid="stForm"] .stTextInput [data-baseweb="input"],
-    form[data-testid="stForm"] .stTextInput [data-baseweb="input"] > div,
-    form[data-testid="stForm"] .stTextInput input[type="password"],
-    form[data-testid="stForm"] .stTextInput [data-baseweb="input"] input {
-        height: 60px !important;
-        min-height: 60px !important;
-        max-height: 60px !important;
-        box-sizing: border-box !important;
-        border: 0px solid transparent !important;
-        border-style: hidden !important;
-        background: #000000 !important;
-        color: #F8F9FA !important;
-        border-radius: 10px !important;
-        padding: 18px 20px !important;
-        font-size: 1.05rem !important;
-        outline: none !important;
-        outline-color: transparent !important;
-        box-shadow: none !important;
-        transition: none !important;
-    }
-    form[data-testid="stForm"] .stTextInput:focus-within input[type="password"],
-    form[data-testid="stForm"] .stTextInput:focus-within [data-baseweb="input"],
-    form[data-testid="stForm"] input[type="password"]:focus,
-    form[data-testid="stForm"] input[type="password"]:focus-visible {
-        border: 2px solid #FFFFFF !important;
-        border-color: #FFFFFF !important;
-        outline: none !important;
-        outline-color: transparent !important;
-        box-shadow: none !important;
-        transition: none !important;
-    }
-    .stButton > button {
-        background: #16A34A !important;
-        color: #FFFFFF !important;
-        border: none !important;
-        border-radius: 10px !important;
-        font-size: 1rem !important;
-        font-weight: 600 !important;
-        padding: 0.8rem 1.1rem !important;
-        letter-spacing: 0.04em;
-        transition: transform 0.15s ease, background 0.15s ease !important;
-    }
-    .stButton > button:hover {
-        background: #4ADE80 !important;
-        color: #000000 !important;
-        transform: translateY(-1px);
-    }
+    disabled_login = bool(login_is_locked)
 
-    /* Suppress Streamlit form-submit hints/tooltips on login */
-    [data-testid="stTooltip"] { display: none !important; }
-    [role="tooltip"] { display: none !important; }
-    .stTextInput [class*="e1kt9bl72"] { display: none !important; }
-    .stTextInput [class*="epumps80"] { display: none !important; }
-    </style>
-    <script>
-    (function() {
-      function removePressEnterHints() {
-        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-        var node;
-        var found = false;
-        while (node = walker.nextNode()) {
-          if (node.textContent.trim().toLowerCase().indexOf('press enter') !== -1) {
-            var parent = node.parentElement;
-            if (parent) {
-              parent.style.display = 'none';
-              found = true;
-            }
-          }
+    st.markdown(
+        """
+        <script>
+        (function() {
+            try {
+                var stored = localStorage.getItem('naturaDashboardAuth');
+                var currentUrl = new URL(window.location.href);
+                if (!currentUrl.searchParams.get('auth') && stored) {
+                    currentUrl.searchParams.set('auth', stored);
+                    window.location.replace(currentUrl.toString());
+                }
+            } catch (e) {}
+        })();
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <style>
+        html, body {
+                overflow: hidden !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                height: 100vh !important;
+                width: 100vw !important;
+                background: #000000 !important;
         }
-        if (found) console.log('Removed press-enter hints via JS');
-      }
-      function observeAndRemove() {
-        removePressEnterHints();
-        if (window._pressEnterObserver) window._pressEnterObserver.disconnect();
-        window._pressEnterObserver = new MutationObserver(function() {
-          removePressEnterHints();
-        });
-        window._pressEnterObserver.observe(document.body, { childList: true, subtree: true });
-      }
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', observeAndRemove);
-      } else {
-        observeAndRemove();
-      }
-    })();
-    </script>
-    """, unsafe_allow_html=True)
+        html, body, [class*="css"], #root, div[data-testid="stAppViewContainer"] {
+                background-color: #000000 !important;
+                color: #F8F9FA !important;
+        }
+        .login-brand {
+                text-align: center;
+                margin-bottom: 34px;
+        }
+        .login-brand h1 {
+                font-family: 'Fira Sans', sans-serif !important;
+                font-weight: 700 !important;
+                font-size: 3rem !important;
+                letter-spacing: 0.03em;
+                margin: 0;
+                color: #FFFFFF !important;
+        }
+        .login-brand p {
+                color: #B0B8C0 !important;
+                font-size: 1.05rem !important;
+                margin-top: 10px !important;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+        }
+        .login-footer {
+                text-align: center;
+                margin-top: 26px;
+                font-size: 0.9rem !important;
+                color: #6B7280 !important;
+        }
+        .login-footer strong {
+                color: #9CA3AF !important;
+                font-weight: 500;
+        }
+        [data-testid="stColumn"]:nth-of-type(2) .stContainer {
+                background: rgba(12, 12, 12, 0.98);
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 28px;
+                padding: 68px 42px 52px;
+                max-width: 460px;
+                margin-top: -25vh;
+        }
+        form[data-testid="stForm"] {
+                border: 1px solid rgba(255,255,255,0.08) !important;
+                border-radius: 18px !important;
+                padding: 24px !important;
+                background: rgba(18,18,18,0.8) !important;
+        }
+        form[data-testid="stForm"] .stTextInput,
+        form[data-testid="stForm"] .stTextInput > div,
+        form[data-testid="stForm"] .stTextInput > div > div,
+        form[data-testid="stForm"] .stTextInput [data-baseweb="input"],
+        form[data-testid="stForm"] .stTextInput [data-baseweb="input"] > div,
+        form[data-testid="stForm"] .stTextInput input[type="password"],
+        form[data-testid="stForm"] .stTextInput [data-baseweb="input"] input {
+                height: 60px !important;
+                min-height: 60px !important;
+                max-height: 60px !important;
+                box-sizing: border-box !important;
+                border: 0px solid transparent !important;
+                border-style: hidden !important;
+                background: #000000 !important;
+                color: #F8F9FA !important;
+                border-radius: 10px !important;
+                padding: 18px 20px !important;
+                font-size: 1.05rem !important;
+                outline: none !important;
+                outline-color: transparent !important;
+                box-shadow: none !important;
+                transition: none !important;
+        }
+        form[data-testid="stForm"] .stTextInput:focus-within input[type="password"],
+        form[data-testid="stForm"] .stTextInput:focus-within [data-baseweb="input"],
+        form[data-testid="stForm"] input[type="password"]:focus,
+        form[data-testid="stForm"] input[type="password"]:focus-visible {
+                border: 2px solid #FFFFFF !important;
+                border-color: #FFFFFF !important;
+                outline: none !important;
+                outline-color: transparent !important;
+                box-shadow: none !important;
+                transition: none !important;
+        }
+        .stButton > button {
+                background: #16A34A !important;
+                color: #FFFFFF !important;
+                border: none !important;
+                border-radius: 10px !important;
+                font-size: 1rem !important;
+                font-weight: 600 !important;
+                padding: 0.8rem 1.1rem !important;
+                letter-spacing: 0.04em;
+                transition: transform 0.15s ease, background 0.15s ease !important;
+        }
+        .stButton > button:hover {
+                background: #4ADE80 !important;
+                color: #000000 !important;
+                transform: translateY(-1px);
+        }
+        [data-testid="stTooltip"] { display: none !important; }
+        [role="tooltip"] { display: none !important; }
+        .stTextInput [class*="e1kt9bl72"] { display: none !important; }
+        .stTextInput [class*="epumps80"] { display: none !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     st.markdown('<div style="height: 10vh;"></div>', unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns([1, 3, 1])
     with col2:
-            st.markdown("""
+        st.markdown(
+            """
             <div class="login-brand">
-                <br>
-                <h1>Natura Resort</h1>
-                <br>
-                <p>Admin Dashboard</p>
+                    <br>
+                    <h1>Natura Resort</h1>
+                    <br>
+                    <p>Admin Dashboard</p>
             </div>
-            """, unsafe_allow_html=True)
-            with st.form("login_form", clear_on_submit=True):
-                col_a, col_b, col_c = st.columns([1, 2, 1])
-                with col_b:
-                    pwd = st.text_input(
-                        label="Password",
-                        type="password",
-                        placeholder="Enter admin password",
-                        label_visibility="collapsed",
-                    )
-                    submitted = st.form_submit_button("Sign In", use_container_width=True, type="primary")
-                    if submitted:
-                        if hmac.compare_digest(_DASH_PWD.encode(), pwd.encode()):
-                            st.session_state.authenticated = True
-                            st.markdown(
-                                "<script>"
-                                "try { if (window.history.replaceState) { window.history.replaceState({}, '', window.location.pathname + '?dashboard_auth=1'); } } catch (e) {}"
-                                "</script>",
-                                unsafe_allow_html=True,
-                            )
+            """,
+            unsafe_allow_html=True,
+        )
+        with st.form("login_form", clear_on_submit=False):
+            col_a, col_b, col_c = st.columns([1, 2, 1])
+            with col_b:
+                attempts_left = max(0, 3 - int(st.session_state.login_attempts))
+                pwd = st.text_input(
+                    label="Password",
+                    type="password",
+                    placeholder="Enter admin password",
+                    label_visibility="collapsed",
+                    key="dashboard_password_input",
+                    disabled=disabled_login,
+                )
+                submitted = st.form_submit_button(
+                    "Sign In",
+                    use_container_width=True,
+                    type="primary",
+                    disabled=disabled_login,
+                )
+                if submitted and not disabled_login:
+                    if hmac.compare_digest(_DASH_PWD.encode(), pwd.encode()):
+                        st.session_state.authenticated = True
+                        st.session_state.login_attempts = 0
+                        st.session_state.dashboard_locked = False
+                        st.session_state.dashboard_lock_until = 0
+                        auth_token = _create_dashboard_auth_token(_DASH_AUTH_SECRET)
+                        st.session_state.dashboard_auth_token = auth_token
+                        st.session_state.dashboard_auth_restored = True
+                        _set_query_param("auth", auth_token)
+                        _clear_query_param("login_attempts")
+                        _clear_query_param("lock_until")
+                        _audit_dashboard_event("login_success", session_id=_session_id_from_token(auth_token))
+                        st.rerun()
+                    else:
+                        st.session_state.login_attempts = min(3, int(st.session_state.login_attempts) + 1)
+                        attempts_left = max(0, 3 - int(st.session_state.login_attempts))
+                        _audit_dashboard_event("login_failed", attempts=st.session_state.login_attempts, attempts_left=attempts_left)
+                        _set_query_param("login_attempts", st.session_state.login_attempts)
+                        if st.session_state.login_attempts >= 3:
+                            st.session_state.dashboard_locked = True
+                            st.session_state.dashboard_lock_until = int(time.time()) + 300
+                            _set_query_param("lock_until", st.session_state.dashboard_lock_until)
+                            _audit_dashboard_event("login_locked", reason="max_attempts_reached")
                             st.rerun()
                         else:
-                            st.error("Incorrect password. Please try again.")
-            st.markdown("""
+                            st.error(f"Incorrect password. {attempts_left} attempt(s) remaining.")
+
+        if login_is_locked:
+            st.markdown('<div style="height:0.35rem;"></div>', unsafe_allow_html=True)
+            _render_login_lock_notice()
+
+        if st.session_state.get("dashboard_auth_token"):
+            st.markdown(
+                f"""
+                <script>
+                (function() {{
+                    try {{
+                        localStorage.setItem('naturaDashboardAuth', {json.dumps(st.session_state.dashboard_auth_token)});
+                    }} catch (e) {{}}
+                }})();
+                </script>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown(
+            """
             <style>
             login-form-check-fix::part(root) {
-              display: none !important;
+                display: none !important;
             }
 
-            /* Suppress Streamlit form QA / accessibility checker overlays on login form */
             [data-testid="stAlert"]:has(> div > div > *:is(p, span)[data-testid="stAlertContent"]),
             form[data-testid="stForm"] ~ div[role="alert"],
             form[data-testid="stForm"] + div[role="alert"],
             div[role="alert"] > div > div > p {
-              display: none !important;
+                display: none !important;
             }
 
-            /* Suppress the inline Streamlit form-submit hints/tooltips on login */
             [data-testid="stTooltip"] { display: none !important; }
             [role="tooltip"] { display: none !important; }
             .stTextInput [class*="e1kt9bl72"] { display: none !important; }
             .stTextInput [class*="epumps80"] { display: none !important; }
 
-            /* Hide injected alert banners/tooltips that contain submit-button warnings */
             form[data-testid="stForm"] ~ div[role="status"],
             form[data-testid="stForm"] + div[role="status"],
             form[data-testid="stForm"] ~ div[role="alert"] {
-              display: none !important;
+                display: none !important;
             }
             </style>
             <script>
             (function() {
-              "use strict";
-              var formSelector = 'form[data-testid="stForm"]';
+                "use strict";
+                var formSelector = 'form[data-testid="stForm"]';
 
-              function hideBadAlerts(node) {
-                var walker = document.createTreeWalker(
-                  node || document.body,
-                  NodeFilter.SHOW_ELEMENT
-                );
-                var el;
-                var removed = 0;
-                while ((el = walker.nextNode())) {
-                  try {
-                    var text = (el.textContent || '').trim();
-                    if (
-                      text.indexOf('submit button') !== -1 ||
-                      text.indexOf('user interactions will never be sent') !== -1
-                    ) {
-                      el.style.setProperty('display', 'none', 'important');
-                      el.setAttribute('aria-hidden', 'true');
-                      removed++;
+                function hideBadAlerts(node) {
+                    var walker = document.createTreeWalker(
+                        node || document.body,
+                        NodeFilter.SHOW_ELEMENT
+                    );
+                    var el;
+                    while ((el = walker.nextNode())) {
+                        try {
+                            var text = (el.textContent || '').trim();
+                            if (
+                                text.indexOf('submit button') !== -1 ||
+                                text.indexOf('user interactions will never be sent') !== -1
+                            ) {
+                                el.style.setProperty('display', 'none', 'important');
+                                el.setAttribute('aria-hidden', 'true');
+                            }
+                        } catch (e) {}
                     }
-                  } catch (e) {}
                 }
-                return removed;
-              }
 
-              function run() {
-                hideBadAlerts();
-                var form = document.querySelector(formSelector);
-                if (!form) return;
-                if (form._loginFormFix) return;
-                form._loginFormFix = true;
+                function run() {
+                    hideBadAlerts();
+                    var form = document.querySelector(formSelector);
+                    if (!form) return;
+                    if (form._loginFormFix) return;
+                    form._loginFormFix = true;
 
-                form.addEventListener('keydown', function(e) {
-                  if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    var btn = form.querySelector('button[type="submit"]');
-                    if (btn) btn.click();
-                  }
-                });
+                    form.addEventListener('keydown', function(e) {
+                        if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            var btn = form.querySelector('button[type="submit"]');
+                            if (btn) btn.click();
+                        }
+                    });
 
-                var observer = new MutationObserver(function() {
-                  hideBadAlerts();
-                });
-                try {
-                  observer.observe(form.parentElement || document.body, {
-                    childList: true,
-                    subtree: true
-                  });
-                } catch (e) {}
-              }
+                    var observer = new MutationObserver(function() {
+                        hideBadAlerts();
+                    });
+                    try {
+                        observer.observe(form.parentElement || document.body, {
+                            childList: true,
+                            subtree: true
+                        });
+                    } catch (e) {}
+                }
 
-              if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', run);
-              } else {
-                run();
-              }
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', run);
+                } else {
+                    run();
+                }
             })();
             </script>
-            """, unsafe_allow_html=True)
-            st.markdown("""
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            """
             <div class="login-footer">
-                <strong>Restricted Access</strong> - Authorized personnel only
+                    <strong>Restricted Access</strong> - Authorized personnel only
             </div>
-            """, unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True,
+        )
     st.stop()
 
 # DB
@@ -1159,15 +1423,31 @@ with st.sidebar:
 
     # Guest
     walkin_name  = st.text_input("Guest name",  placeholder="Full name", key="sb_walkin_name")
-    walkin_phone = st.text_input("Guest phone", key="sb_walkin_phone")
+    walkin_prefix = st.selectbox(
+        "Phone prefix",
+        list(PHONE_PREFIX_LABELS.keys()),
+        format_func=lambda value: PHONE_PREFIX_LABELS[value],
+        key="sb_walkin_prefix",
+    )
+    walkin_phone_local = st.text_input("Guest phone", placeholder="9800000000", key="sb_walkin_phone")
 
-    can_book = bool(target_room and not date_error and walkin_name.strip() and walkin_phone.strip())
+    normalized_walkin_phone = _normalize_local_phone_number(walkin_phone_local)
+    can_book = bool(
+        target_room
+        and not date_error
+        and walkin_name.strip()
+        and walkin_prefix in PHONE_PREFIX_LABELS
+        and normalized_walkin_phone
+    )
     if st.button("Book", use_container_width=True, disabled=not can_book, key="sb_book_btn", type="primary"):
         if not target_room:
             st.error("No rooms available for the selected dates.")
-        elif not walkin_name.strip() or not walkin_phone.strip():
+        elif not walkin_name.strip() or not normalized_walkin_phone:
             st.error("Please provide guest name and phone number.")
+        elif walkin_prefix not in PHONE_PREFIX_LABELS:
+            st.error("Please select a valid country prefix.")
         else:
+            walkin_phone = f"{walkin_prefix}{normalized_walkin_phone}"
             if sb_ci == sb_today:
                 res_status = "active" if now_npl().time() >= _CHECKIN_TIME else "pending"
             else:
@@ -1224,6 +1504,18 @@ with st.sidebar:
                 st.error(f"Booking failed: {e}")
             else:
                 st.rerun()
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    if st.button("Cerrar sesión", use_container_width=True):
+        _audit_dashboard_event("logout", session_id=_session_id_from_token(st.session_state.get("dashboard_auth_token", "")))
+        st.session_state.authenticated = False
+        st.session_state.dashboard_auth_token = ""
+        st.session_state.dashboard_auth_restored = False
+        st.session_state.login_attempts = 0
+        st.session_state.dashboard_locked = False
+        st.session_state.dashboard_lock_until = 0
+        _clear_dashboard_security_query_params()
+        st.rerun()
 
 apply_checkout_statuses()
 

@@ -2,10 +2,28 @@
 
 // Config
 const RESORT_CONFIG = {
-    API_BASE: '/api',
+    API_BASE: (() => {
+        try {
+            if (window.location && window.location.origin && window.location.origin !== 'null') {
+                return `${window.location.origin}/api`;
+            }
+        } catch (e) {}
+        return 'http://localhost:8080/api';
+    })(),
     WHATSAPP_NUMBER: '9779804262505',
     WHATSAPP_MESSAGE: 'Hi, I have an inquiry!',
 };
+
+const FALLBACK_PHONE_PREFIXES = [
+    { value: '+977', label: '🇳🇵 +977 Nepal' },
+    { value: '+593', label: '🇪🇨 +593 Ecuador' },
+];
+
+const PHONE_PREFIX_API_URLS = [
+    `${RESORT_CONFIG.API_BASE}/phone-prefixes`,
+    'https://restcountries.com/v3.1/all?fields=name,idd,cca2',
+];
+const PHONE_PREFIXES = new Set(FALLBACK_PHONE_PREFIXES.map(item => item.value));
 
 // Helpers
 function extractErrorMessage(data) {
@@ -20,8 +38,108 @@ async function safeJson(response) {
     try { return await response.json(); } catch { return null; }
 }
 
+function cca2ToFlagEmoji(cca2) {
+    if (!cca2 || String(cca2).length !== 2) return '🌐';
+    return String.fromCodePoint(...String(cca2).toUpperCase().split('').map(char => 127397 + char.charCodeAt(0)));
+}
+
+function buildPhonePrefixOptions(countries) {
+    const seen = new Map();
+
+    (Array.isArray(countries) ? countries : []).forEach(country => {
+        const idd = country && country.idd ? country.idd : null;
+        const root = idd && typeof idd.root === 'string' ? idd.root.trim() : '';
+        const suffixes = Array.isArray(idd && idd.suffixes) && idd.suffixes.length ? idd.suffixes : [''];
+        const countryName = country && country.name && typeof country.name.common === 'string' ? country.name.common.trim() : '';
+        const flag = cca2ToFlagEmoji(country && country.cca2);
+
+        if (!root) return;
+
+        suffixes.forEach(suffix => {
+            const suffixText = typeof suffix === 'string' ? suffix.trim() : '';
+            const code = `${root}${suffixText}`;
+            if (!/^\+[1-9]\d{0,3}$/.test(code) || seen.has(code)) return;
+            const label = countryName ? `${flag} ${code} ${countryName}` : `${flag} ${code}`;
+            seen.set(code, label);
+        });
+    });
+
+    const merged = Array.from(seen.entries()).map(([value, label]) => ({ value, label }));
+    if (!merged.some(item => item.value === '+977')) {
+        merged.unshift({ value: '+977', label: '🇳🇵 +977 Nepal' });
+    }
+    if (!merged.some(item => item.value === '+593')) {
+        merged.splice(Math.min(1, merged.length), 0, { value: '+593', label: '🇪🇨 +593 Ecuador' });
+    }
+    return merged.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+async function loadPhonePrefixOptions() {
+    for (const phonePrefixUrl of PHONE_PREFIX_API_URLS) {
+        try {
+            const response = await fetch(phonePrefixUrl, { cache: 'no-store' });
+            if (!response.ok) throw new Error(`Phone prefix source returned ${response.status}`);
+            const payload = await response.json();
+            const options = Array.isArray(payload)
+                ? buildPhonePrefixOptions(payload)
+                : (payload && Array.isArray(payload.prefixes) ? payload.prefixes : []);
+            if (options.length) return options;
+        } catch (error) {
+            console.warn('Phone prefix source failed:', phonePrefixUrl, error);
+        }
+    }
+
+    return FALLBACK_PHONE_PREFIXES;
+}
+
+function populatePhonePrefixSelect(options) {
+    const phonePrefixContainer = document.querySelector('.phone-prefix-select');
+    const selectEl = document.getElementById('phonePrefix');
+    if (!phonePrefixContainer || !selectEl) return;
+
+    const trigger = phonePrefixContainer.querySelector('.guest-select-trigger');
+    const display = phonePrefixContainer.querySelector('.guest-select-display');
+    const menu = phonePrefixContainer.querySelector('.guest-select-menu');
+    const currentValue = selectEl.value;
+
+    selectEl.innerHTML = '';
+    menu.innerHTML = '';
+
+    PHONE_PREFIXES.clear();
+
+    options.forEach((option, index) => {
+        PHONE_PREFIXES.add(option.value);
+
+        const selectOption = document.createElement('option');
+        selectOption.value = option.value;
+        selectOption.textContent = option.label;
+        if (option.value === currentValue || (index === 0 && !currentValue)) selectOption.selected = true;
+        selectEl.appendChild(selectOption);
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'guest-select-option';
+        button.setAttribute('role', 'option');
+        button.dataset.value = option.value;
+        button.textContent = option.label;
+        menu.appendChild(button);
+    });
+
+    const preferred = options.find(option => option.value === currentValue)
+        || options.find(option => option.value === '+977')
+        || options[0];
+    if (preferred) selectEl.value = preferred.value;
+
+    if (trigger && display && menu.querySelectorAll('.guest-select-option').length > 0) {
+        initGuestSelect(phonePrefixContainer);
+    }
+}
+
+populatePhonePrefixSelect(FALLBACK_PHONE_PREFIXES);
+loadPhonePrefixOptions().then(populatePhonePrefixSelect);
+
 function initGuestSelect(guestSelectEl) {
-    if (!guestSelectEl || guestSelectEl.dataset.initialized === 'true') return;
+    if (!guestSelectEl) return;
 
     const selectId = guestSelectEl.dataset.selectId;
     const selectEl = document.getElementById(selectId);
@@ -29,6 +147,7 @@ function initGuestSelect(guestSelectEl) {
     const display  = guestSelectEl.querySelector('.guest-select-display');
     const menu     = guestSelectEl.querySelector('.guest-select-menu');
     const options  = Array.from(guestSelectEl.querySelectorAll('.guest-select-option'));
+    const alreadyInitialized = guestSelectEl.dataset.initialized === 'true';
 
     if (!selectEl || !trigger || !display || !menu || options.length === 0) return;
 
@@ -65,20 +184,29 @@ function initGuestSelect(guestSelectEl) {
         });
     };
 
-    trigger.addEventListener('click', () => {
-        if (menu.classList.contains('hidden')) open();
-        else close();
-    });
+    if (!alreadyInitialized) {
+        trigger.addEventListener('click', () => {
+            if (menu.classList.contains('hidden')) open();
+            else close();
+        });
 
-    options.forEach(btn => {
-        btn.addEventListener('click', () => {
+        menu.addEventListener('click', (event) => {
+            const btn = event.target.closest('.guest-select-option');
+            if (!btn || !menu.contains(btn)) return;
             selectEl.value = btn.dataset.value;
             selectEl.dispatchEvent(new Event('change', { bubbles: true }));
             close();
         });
-    });
 
-    selectEl.addEventListener('change', syncFromSelect);
+        trigger.addEventListener('keydown', (event) => {
+            if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                open();
+            }
+        });
+
+        selectEl.addEventListener('change', syncFromSelect);
+    }
 
     guestSelectEl.dataset.initialized = 'true';
     syncFromSelect();
@@ -114,6 +242,10 @@ const fmt = (dateStr) =>
 
 function scrollPanelToTop(panel) {
     if (panel && !panel.classList.contains('hidden')) panel.scrollTop = 0;
+}
+
+function normalizeLocalPhoneNumber(value) {
+    return String(value || '').replace(/\D/g, '');
 }
 
 // WhatsApp float
@@ -236,6 +368,10 @@ const proceedBtn    = document.getElementById('proceedBtn');
 const guestDetailsForm      = document.getElementById('guestDetailsForm');
 const successMessage        = document.getElementById('successMessage');
 const closeWizardSuccessBtn = document.getElementById('closeWizardSuccessBtn');
+const systemMessageModal    = document.getElementById('systemMessageModal');
+const systemMessageTitle    = document.getElementById('systemMessageTitle');
+const systemMessageText     = document.getElementById('systemMessageText');
+const closeSystemMessageBtn = document.getElementById('closeSystemMessageBtn');
 
 // Wizard state
 let currentWizardStep  = 1;
@@ -272,9 +408,33 @@ wizardBackBtn.addEventListener('click', () => {
     else if (currentWizardStep === 3) transitionToStep(2);
 });
 
+function closeSystemMessageModal() {
+    systemMessageModal?.classList.add('hidden');
+}
+
+function showSystemMessageModal(title, message) {
+    if (!systemMessageModal || !systemMessageTitle || !systemMessageText) return;
+
+    systemMessageTitle.textContent = title || 'Message';
+    systemMessageText.textContent = message || '';
+    systemMessageModal.classList.remove('hidden');
+    closeSystemMessageBtn?.focus();
+}
+
+systemMessageModal?.addEventListener('click', (event) => {
+    if (event.target === systemMessageModal) closeSystemMessageModal();
+});
+
+closeSystemMessageBtn?.addEventListener('click', closeSystemMessageModal);
+
 // Close modal
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeWizard();
+    if (e.key !== 'Escape') return;
+    if (systemMessageModal && !systemMessageModal.classList.contains('hidden')) {
+        closeSystemMessageModal();
+        return;
+    }
+    if (!modal.classList.contains('hidden')) closeWizard();
 });
 
 // Scroll-lock helpers
@@ -638,8 +798,8 @@ const reassignRoomLabels = () => {
 
 // Phone input
 document.getElementById('phone').addEventListener('input', function () {
-    // Allow digits,
-    this.value = this.value.replace(/[^\d\s+\-]/g, '');
+    // Allow digits only; the country prefix is selected separately.
+    this.value = this.value.replace(/\D/g, '');
 });
 
 // Step 1
@@ -647,15 +807,15 @@ bookingForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
     if (!checkinInput.value || !checkoutInput.value) {
-        alert('Please select both check-in and check-out dates.');
+        showSystemMessageModal('Missing Dates', 'Please select both check-in and check-out dates.');
         return;
     }
     if (checkinInput.value >= checkoutInput.value) {
-        alert('Check-out date must be after check-in date.');
+        showSystemMessageModal('Invalid Date Range', 'Check-out date must be after check-in date.');
         return;
     }
     if (checkinInput.value > maxCheckinDate) {
-        alert('Check-in date cannot be more than 1 month in the future.');
+        showSystemMessageModal('Invalid Check-in Date', 'Check-in date cannot be more than 1 month in the future.');
         return;
     }
 
@@ -663,7 +823,7 @@ bookingForm.addEventListener('submit', async (e) => {
     const maxAllowedDate = new Date(checkinDate);
     maxAllowedDate.setMonth(maxAllowedDate.getMonth() + 1);
     if (toLocalMidnight(checkoutInput.value) > maxAllowedDate) {
-        alert('Maximum stay duration is 1 month.');
+        showSystemMessageModal('Stay Limit Exceeded', 'Maximum stay duration is 1 month.');
         return;
     }
 
@@ -707,11 +867,11 @@ bookingForm.addEventListener('submit', async (e) => {
             activeTabId = requestedRooms[0].id;
             transitionToStep(2);
         } else {
-            alert(`Availability Check Failed:\n${extractErrorMessage(data)}`);
+            showSystemMessageModal('Availability Check Failed', extractErrorMessage(data));
         }
     } catch (err) {
         console.error('Fetch error:', err);
-        alert('Could not connect to the server. Please ensure the backend is running.');
+        showSystemMessageModal('Connection Error', 'Could not connect to the server. Please ensure the backend is running.');
     } finally {
         submitBtn.textContent = origText;
         submitBtn.disabled    = false;
@@ -967,20 +1127,27 @@ guestDetailsForm.addEventListener('submit', async (e) => {
 
     const roomTypeIds = Object.values(selections).map(val => parseInt(val, 10));
     if (roomTypeIds.length === 0) {
-        alert('Please select at least one room before confirming.');
+        showSystemMessageModal('No Room Selected', 'Please select at least one room before confirming.');
         return;
     }
 
-    const fullName = document.getElementById('fullName').value.trim();
-    const phone    = document.getElementById('phone').value.trim();
+    const fullName    = document.getElementById('fullName').value.trim();
+    const phonePrefix = document.getElementById('phonePrefix').value.trim();
+    const phoneLocal  = normalizeLocalPhoneNumber(document.getElementById('phone').value);
     const email    = (document.getElementById('email') || {}).value?.trim() || '';
 
     // Basic client-side validation
-    if (!fullName) { alert('Please enter your full name.'); return; }
-    if (!phone || !/^[\d\s\+\-()]{7,20}$/.test(phone)) {
-        alert('Please enter a valid phone number.');
+    if (!fullName) { showSystemMessageModal('Missing Guest Name', 'Please enter your full name.'); return; }
+    if (!PHONE_PREFIXES.has(phonePrefix)) {
+        showSystemMessageModal('Invalid Country Prefix', 'Please select a valid country prefix.');
         return;
     }
+    if (!phoneLocal || phoneLocal.length < 7 || phoneLocal.length > 12) {
+        showSystemMessageModal('Invalid Phone Number', 'Please enter a valid phone number.');
+        return;
+    }
+
+    const phone = `${phonePrefix}${phoneLocal}`;
 
     const payload = {
         checkin:       checkinInput.value,
@@ -1016,11 +1183,11 @@ guestDetailsForm.addEventListener('submit', async (e) => {
 
             [step1Panel, step2Panel, step3Panel].forEach(scrollPanelToTop);
         } else {
-            alert(`Booking Failed:\n${extractErrorMessage(data)}`);
+            showSystemMessageModal('Booking Failed', extractErrorMessage(data));
         }
     } catch (error) {
         console.error('Reservation error:', error);
-        alert('Could not connect to the server. Please ensure the backend is running.');
+        showSystemMessageModal('Connection Error', 'Could not connect to the server. Please ensure the backend is running.');
     } finally {
         submitBtn.textContent = origText;
         submitBtn.disabled    = false;

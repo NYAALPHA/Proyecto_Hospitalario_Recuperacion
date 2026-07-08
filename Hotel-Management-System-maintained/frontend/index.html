@@ -450,11 +450,22 @@
                             <div class="form-group">
                                 <label for="email">Email Address <span style="font-weight:normal; opacity:.7;">(optional)</span></label>
                                 <input type="email" id="email" name="email" placeholder="e.g., john@example.com" autocomplete="email">
+                                <small class="field-note">You can update this email later by contacting the hotel staff on WhatsApp.</small>
                             </div>
                             <div class="form-group">
                                 <label for="phone">Phone Number</label>
                                 <div class="phone-input-container">
-                                    <input type="tel" id="phone" name="phone" required placeholder="+977 9800000000" maxlength="20" autocomplete="tel">
+                                        <div class="guest-select phone-prefix-select" data-select-id="phonePrefix">
+                                            <button type="button" class="guest-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+                                                <span class="guest-select-display">Loading prefixes...</span>
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                                </svg>
+                                            </button>
+                                            <div class="guest-select-menu hidden" role="listbox" aria-label="Country phone prefixes"></div>
+                                            <select id="phonePrefix" name="phonePrefix" class="guest-select-native" required aria-label="Country phone prefix"></select>
+                                        </div>
+                                        <input type="tel" id="phone" name="phone" required placeholder="9800000000" maxlength="12" inputmode="numeric" autocomplete="tel-national">
                                 </div>
                             </div>
                         </div>
@@ -484,6 +495,22 @@
         <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" alt="" width="35" height="35">
     </a>
 
-    <script src="script.js?v=2"></script>
+    <div id="systemMessageModal" class="system-message-modal hidden" role="alertdialog" aria-modal="true" aria-labelledby="systemMessageTitle" aria-describedby="systemMessageText">
+        <div class="system-message-card" role="document">
+            <div class="system-message-header">
+                <span class="system-message-badge" aria-hidden="true">!</span>
+                <div>
+                    <h2 id="systemMessageTitle">Message</h2>
+                    <p>Natura Resort</p>
+                </div>
+            </div>
+            <p id="systemMessageText" class="system-message-text"></p>
+            <div class="system-message-actions">
+                <button type="button" class="btn-home-return system-message-close-btn" id="closeSystemMessageBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js?v=3"></script>
 </body>
 </html>

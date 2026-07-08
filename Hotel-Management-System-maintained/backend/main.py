@@ -1,6 +1,8 @@
 import hmac
+import json
 import os
 import re
+import time
 import uuid
 import logging
 import logging.config
@@ -8,12 +10,14 @@ from contextlib import asynccontextmanager
 from decimal import Decimal
 from datetime import date, datetime, time as dt_time
 from typing import List, Self
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 
 import pytz
 import mysql.connector
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -32,6 +36,9 @@ class _RequestIdFilter(logging.Filter):
 
 
 logger = logging.getLogger(__name__)
+
+_PHONE_PREFIX_API_URL = "https://restcountries.com/v3.1/all?fields=idd"
+_PHONE_PREFIX_FALLBACK = {"+977", "+593"}
 
 # Token
 _ADMIN_TOKEN_PLACEHOLDER = "replace_with_a_strong_random_secret"
@@ -66,6 +73,66 @@ def now_nepal() -> datetime:
     return datetime.now(_NEPAL_TZ)
 
 
+def _load_phone_prefix_options() -> list[dict[str, str]]:
+    cached = globals().get("_PHONE_PREFIX_CACHE")
+    if isinstance(cached, list) and cached:
+        return cached
+
+    options = [
+        {"value": "+977", "label": "🇳🇵 +977 Nepal"},
+        {"value": "+593", "label": "🇪🇨 +593 Ecuador"},
+    ]
+    try:
+        with urlopen(_PHONE_PREFIX_API_URL, timeout=5) as response:
+            countries = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError, OSError):
+        return options
+
+    discovered: dict[str, str] = {}
+    if isinstance(countries, list):
+        for country in countries:
+            idd = country.get("idd") or {}
+            root = str(idd.get("root") or "").strip()
+            if not root:
+                continue
+
+            suffixes = idd.get("suffixes") or [""]
+            for suffix in suffixes:
+                suffix_text = str(suffix or "").strip()
+                code = f"{root}{suffix_text}"
+                if re.fullmatch(r"\+[1-9]\d{0,3}", code) and code not in discovered:
+                    label = str((country.get("name") or {}).get("common") or "").strip()
+                    flag = ""
+                    cca2 = str(country.get("cca2") or "").strip()
+                    if len(cca2) == 2:
+                        flag = "".join(chr(ord(char) + 127397) for char in cca2.upper())
+                    discovered[code] = f"{flag} {code} {label}".strip()
+
+    if discovered:
+        options = sorted(
+            [{"value": value, "label": label} for value, label in discovered.items()],
+            key=lambda item: item["label"],
+        )
+        fallback_by_value = {item["value"]: item for item in [
+            {"value": "+977", "label": "🇳🇵 +977 Nepal"},
+            {"value": "+593", "label": "🇪🇨 +593 Ecuador"},
+        ]}
+        present_values = {item["value"] for item in options}
+        for value in ("+977", "+593"):
+            if value not in present_values:
+                options.insert(min(1, len(options)), fallback_by_value[value])
+    if options != [
+        {"value": "+977", "label": "🇳🇵 +977 Nepal"},
+        {"value": "+593", "label": "🇪🇨 +593 Ecuador"},
+    ]:
+        globals()["_PHONE_PREFIX_CACHE"] = options
+    return options
+
+
+def _allowed_phone_prefixes() -> set[str]:
+    return {item["value"] for item in _load_phone_prefix_options()}
+
+
 def today_nepal() -> date:
     return now_nepal().date()
 
@@ -82,8 +149,19 @@ def is_past_checkin_time() -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Natura Resort Booking API starting up.")
-    # Initialize the
-    get_db_pool()
+    last_error = None
+    for attempt in range(1, 11):
+        try:
+            # Initialize the database pool once MySQL is ready.
+            get_db_pool()
+            last_error = None
+            break
+        except Exception as exc:
+            last_error = exc
+            logger.warning("Database pool init attempt %d/10 failed: %s", attempt, exc)
+            time.sleep(2)
+    if last_error is not None:
+        raise last_error
     yield
     logger.info("Natura Resort Booking API shut down.")
 
@@ -113,7 +191,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # CORS
 _allowed_origins_env = os.getenv(
     "ALLOWED_ORIGINS",
-    "http://localhost,http://127.0.0.1,https://localhost,https://127.0.0.1",
+    "http://localhost:8080,http://127.0.0.1:8080,https://localhost:8443,https://127.0.0.1:8443",
 )
 allowed_origins = [o.strip() for o in _allowed_origins_env.split(",") if o.strip()]
 
@@ -196,7 +274,7 @@ class AvailabilityRequest(BaseModel):
 
 class GuestInfo(BaseModel):
     full_name: str
-    email: str | None = None
+    email: EmailStr | None = None
     phone: str
 
     @field_validator("full_name")
@@ -207,27 +285,32 @@ class GuestInfo(BaseModel):
             raise ValueError("Full name must be between 1 and 100 characters.")
         return v
 
-    @field_validator("email")
+    @field_validator("email", mode="before")
     @classmethod
     def validate_email(cls, v: str | None) -> str | None:
         if v is None:
             return None
-        v = v.strip()
+        v = str(v).strip().lower()
         if not v:
             return None
-        if "@" not in v or "." not in v:
-            raise ValueError("Invalid email format.")
         return v
 
     @field_validator("phone")
     @classmethod
     def validate_phone(cls, v: str) -> str:
-        v = v.strip()
-        if not v or not re.match(r"^\+?[\d\s\-]{7,20}$", v):
-            raise ValueError(
-                "Invalid phone format. Use digits, spaces, hyphens, and an optional leading +."
-            )
-        return v
+        normalized = re.sub(r"[\s\-().]", "", v.strip())
+        if not normalized or not normalized.startswith("+"):
+            raise ValueError("Invalid phone format. Use an approved country prefix and digits only.")
+
+        prefix = next((p for p in _allowed_phone_prefixes() if normalized.startswith(p)), None)
+        if not prefix:
+            raise ValueError("Invalid phone prefix. Use one of the approved country prefixes.")
+
+        local_number = normalized[len(prefix):]
+        if not re.fullmatch(r"\d{7,12}", local_number):
+            raise ValueError("Invalid phone number. Use 7 to 12 digits after the country prefix.")
+
+        return f"{prefix}{local_number}"
 
 
 class ReservationRequest(BaseModel):
@@ -255,6 +338,11 @@ class ReservationRequest(BaseModel):
         if any((not isinstance(x, int) or x <= 0) for x in v):
             raise ValueError("Invalid room type selection.")
         return v
+
+
+@app.get("/api/phone-prefixes")
+def phone_prefixes():
+    return {"prefixes": _load_phone_prefix_options()}
 
 
 # Checkout

@@ -24,7 +24,7 @@ fi
 
 # 1) Trigger backend archive endpoint
 if [ -n "$TOKEN" ]; then
-    ARCHIVE_RESP=$(curl -s -X POST http://127.0.0.1:3000/api/admin/archive-old \
+    ARCHIVE_RESP=$(curl -s -X POST http://127.0.0.1:3001/api/admin/archive-old \
         -H "X-Admin-Token: $TOKEN" \
         -H "Content-Type: application/json" \
         -d '{"days":90}' \
@@ -74,7 +74,7 @@ fi
 
 # 4) Prune very old archive records (optional safety)
 if [ -n "$TOKEN" ]; then
-    curl -s -X POST http://127.0.0.1:3000/api/admin/archive-old \
+    curl -s -X POST http://127.0.0.1:3001/api/admin/archive-old \
         -H "X-Admin-Token: $TOKEN" \
         -H "Content-Type: application/json" \
         -d '{"days":90}' \

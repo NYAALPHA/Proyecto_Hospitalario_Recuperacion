@@ -19,8 +19,8 @@ services:
   # Dashboard (Streamlit automatically reloads when files change!)
   dashboard:
     ports:
-      # Expose the dashboard port directly to your host machine (http://localhost:8501)
-      - "8501:8501"
+      # Expose the dashboard port directly to your host machine (http://localhost:8502)
+      - "8502:8501"
     volumes:
       # Mounts your dashboard source files 
       - ./dashboard:/app

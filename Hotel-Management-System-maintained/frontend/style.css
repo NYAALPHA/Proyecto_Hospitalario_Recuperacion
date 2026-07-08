@@ -583,6 +583,89 @@ nav.scrolled .logo-btn .resort-text { color: var(--accent-red); }
 
 .booking-wizard-modal.hidden { display: none !important; }
 
+.system-message-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 11000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(14, 33, 25, 0.72);
+    backdrop-filter: blur(8px);
+    animation: fullscreenFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.system-message-modal.hidden { display: none !important; }
+
+.system-message-card {
+    width: min(100%, 520px);
+    background: linear-gradient(180deg, #ffffff 0%, #f7faf8 100%);
+    border: 1px solid rgba(27, 67, 50, 0.16);
+    border-top: 4px solid var(--accent-red);
+    border-radius: 24px;
+    box-shadow: 0 30px 80px rgba(8, 22, 16, 0.35);
+    padding: 28px;
+}
+
+.system-message-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 18px;
+}
+
+.system-message-badge {
+    width: 42px;
+    height: 42px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(165, 20, 42, 0.12);
+    color: var(--accent-red);
+    font-family: 'Playfair Display', serif;
+    font-size: 1.35rem;
+    font-weight: 700;
+}
+
+.system-message-header h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.5rem;
+    color: var(--primary-green);
+    margin-bottom: 2px;
+}
+
+.system-message-header p {
+    font-size: 0.72rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.system-message-text {
+    color: var(--text-dark);
+    font-size: 0.98rem;
+    line-height: 1.65;
+    white-space: pre-line;
+    margin-bottom: 24px;
+}
+
+.system-message-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.system-message-close-btn {
+    min-width: 140px;
+    box-shadow: none;
+}
+
+.system-message-close-btn:hover {
+    transform: translateY(-1px);
+}
+
 .booking-wrapper {
     background: transparent;
     width: 100%;
@@ -1322,7 +1405,23 @@ nav.scrolled .logo-btn .resort-text { color: var(--accent-red); }
 }
 
 .phone-input-container { display: flex; gap: 10px; width: 100%; }
-.phone-input-container input { flex-grow: 1; }
+.phone-input-container select {
+    flex: 0 0 170px;
+    max-width: 170px;
+}
+.phone-input-container input {
+    flex-grow: 1;
+    min-width: 0;
+}
+
+.field-note {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.78rem;
+    line-height: 1.35;
+    color: var(--text-muted);
+    opacity: 0.9;
+}
 
 .total-amount-text {
     font-size: 1.1rem;
